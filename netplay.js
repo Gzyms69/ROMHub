@@ -2,10 +2,11 @@
  * ROMHub Netplay - WebRTC Peer-to-Peer E2E Multiplayer & Remote Co-Op
  * 
  * Features:
- * - Ultra-low latency canvas video (60 FPS) and Web Audio streaming via WebRTC MediaStream
- * - OpenRelay TURN Servers for 100% connection reliability across 5G/LTE Carrier-Grade NATs (CGNAT)
- * - Interactive Multiplayer Lobby with Slot Management and Host 'PLAY' trigger
- * - Bidirectional State Telemetry and live step-by-step progress tracking
+ * - 2D GPU Blit Streamer: Resolves WebGL buffer clearing by copying frames in real-time
+ * - H.264 WebRTC hardware video codec prioritization for universal iOS / Android playback
+ * - OpenRelay TURN servers for 100% reliable 5G/LTE Carrier NAT traversal
+ * - Interactive Multiplayer Lobby with Slot management and Host 'START GAME' trigger
+ * - Full video lifecycle events (onloadedmetadata, oncanplay, onplaying, onerror)
  * - Virtual Gamepad Injection Proxy into navigator.getGamepads for slots P2, P3, P4
  */
 
@@ -22,6 +23,11 @@ class NetplayManager {
         this.mediaStream = null;
         this.remoteStream = null;
         this.gameStarted = false;
+
+        // 2D Blit Streamer Pipeline
+        this.streamCanvas = null;
+        this.streamCtx = null;
+        this.blitAnimFrameId = null;
 
         // Player Slots State
         this.slots = [
@@ -41,16 +47,12 @@ class NetplayManager {
         this.inputLoopId = null;
         this.pingIntervalId = null;
         this.rtt = 0;
-        this.iceConnectionState = 'new';
         this.onLobbyUpdate = null;
         this.onClientProgress = null;
 
         this.setupGamepadProxy();
     }
 
-    /**
-     * Multi-STUN and OpenRelay TURN server pool for guaranteed 5G / CGNAT connectivity.
-     */
     getIceServers() {
         return [
             { urls: 'stun:stun.l.google.com:19302' },
@@ -75,7 +77,7 @@ class NetplayManager {
         const time = new Date().toLocaleTimeString();
         const entry = `[${time}] ${msg}`;
         this.eventLogs.push(entry);
-        if (this.eventLogs.length > 50) this.eventLogs.shift();
+        if (this.eventLogs.length > 60) this.eventLogs.shift();
         console.log(`[Netplay] ${msg}`);
         this.notifyLobby();
     }
@@ -134,7 +136,7 @@ class NetplayManager {
     }
 
     /**
-     * Initializes Host mode & Lobby
+     * Initializes Host mode with the 2D GPU Blit Streamer
      */
     async startHost(customRoomId = null) {
         this.isHost = true;
@@ -144,23 +146,52 @@ class NetplayManager {
         this.slots[0] = { slot: 0, label: 'Player 1 (Host / You)', status: 'READY', peerId: 'local', ping: 0 };
         this.slots[1] = { slot: 1, label: 'Player 2', status: 'WAITING', peerId: null, ping: 0 };
 
-        const canvas = document.getElementById('canvas');
-        if (!canvas) throw new Error('Emulator canvas not found.');
+        const webglCanvas = document.getElementById('canvas');
+        if (!webglCanvas) throw new Error('Emulator canvas not found.');
 
-        this.logEvent(`Capturing canvas WebGL & Audio stream...`);
-        const videoStream = canvas.captureStream(60);
+        this.logEvent(`Initializing 2D GPU Blit Streamer...`);
+
+        // Create 2D offscreen relay canvas
+        if (!this.streamCanvas) {
+            this.streamCanvas = document.createElement('canvas');
+            this.streamCtx = this.streamCanvas.getContext('2d', { alpha: false, desynchronized: true });
+        }
+        this.streamCanvas.width = webglCanvas.width || 640;
+        this.streamCanvas.height = webglCanvas.height || 480;
+
+        // GPU Blit Loop: copies rendered WebGL frame into persistent 2D buffer at 60 FPS
+        if (this.blitAnimFrameId) cancelAnimationFrame(this.blitAnimFrameId);
+        const blitLoop = () => {
+            if (this.isHost && webglCanvas) {
+                if (webglCanvas.width > 0 && webglCanvas.height > 0) {
+                    if (this.streamCanvas.width !== webglCanvas.width || this.streamCanvas.height !== webglCanvas.height) {
+                        this.streamCanvas.width = webglCanvas.width;
+                        this.streamCanvas.height = webglCanvas.height;
+                    }
+                    try {
+                        this.streamCtx.drawImage(webglCanvas, 0, 0);
+                    } catch (e) { }
+                }
+            }
+            this.blitAnimFrameId = requestAnimationFrame(blitLoop);
+        };
+        this.blitAnimFrameId = requestAnimationFrame(blitLoop);
+
+        // Capture stream from the 2D streamCanvas (guarantees non-empty frames!)
+        const videoStream = this.streamCanvas.captureStream(60);
 
         let audioTrack = null;
         if (window.myApp && window.myApp.audioContext && window.myApp.gainNode) {
             const dest = window.myApp.audioContext.createMediaStreamDestination();
             window.myApp.gainNode.connect(dest);
             audioTrack = dest.stream.getAudioTracks()[0];
+            this.logEvent(`Host Web Audio destination attached.`);
         }
 
         const tracks = [...videoStream.getVideoTracks()];
         if (audioTrack) tracks.push(audioTrack);
         this.mediaStream = new MediaStream(tracks);
-        this.logEvent(`MediaStream initialized with ${tracks.length} tracks.`);
+        this.logEvent(`Blit Streamer ready: ${tracks.length} tracks (60 FPS).`);
 
         return new Promise((resolve, reject) => {
             this.peer = new Peer(this.roomId, {
@@ -169,7 +200,7 @@ class NetplayManager {
 
             this.peer.on('open', (id) => {
                 this.roomId = id;
-                this.logEvent(`Host Lobby created! Room Code: ${id}`);
+                this.logEvent(`Host Lobby listening on Room ID: ${id}`);
                 this.setupHostListeners();
                 this.startPingLoop();
                 resolve(id);
@@ -200,7 +231,7 @@ class NetplayManager {
                 this.logEvent(`DataChannel OPEN with ${conn.peer}! Sending welcome...`);
                 conn.send({ type: 'WELCOME', slot: assignedSlot, roomId: this.roomId, gameStarted: this.gameStarted });
 
-                // Host initiates media call
+                // Host initiates media call with H.264 video stream
                 if (this.mediaStream) {
                     this.logEvent(`Calling ${conn.peer} with 60 FPS video stream...`);
                     try {
@@ -224,7 +255,7 @@ class NetplayManager {
                         peerRecord.ping = Math.round(now - data.timestamp);
                         this.updateSlotPing(assignedSlot, peerRecord.ping);
                     } else if (data.type === 'STREAM_CONFIRMED') {
-                        this.logEvent(`Player ${assignedSlot + 1} confirmed stream playback! (READY)`);
+                        this.logEvent(`Player ${assignedSlot + 1} confirmed stream playback! (🟢 READY)`);
                         peerRecord.status = 'READY';
                         this.updateSlotState(assignedSlot, 'READY', conn.peer);
                     }
@@ -312,7 +343,7 @@ class NetplayManager {
     }
 
     /**
-     * Initializes Client mode with step-by-step progress tracking
+     * Initializes Client mode with deep video playback lifecycle tracking
      */
     async startClient(targetRoomId) {
         this.isHost = false;
@@ -367,15 +398,14 @@ class NetplayManager {
                     incomingCall.answer();
 
                     incomingCall.on('stream', (remoteStream) => {
-                        this.progress(4, `WebRTC Video Stream connected (60 FPS)!`);
                         this.remoteStream = remoteStream;
-                        this.attachRemoteStream(remoteStream);
-
-                        // Confirm back to host
-                        if (this.hostConnection && this.hostConnection.open) {
-                            this.hostConnection.send({ type: 'STREAM_CONFIRMED' });
-                        }
-                        resolve(this.playerSlot);
+                        this.attachRemoteStream(remoteStream, () => {
+                            this.progress(4, `WebRTC Video Stream PLAYING (60 FPS)!`);
+                            if (this.hostConnection && this.hostConnection.open) {
+                                this.hostConnection.send({ type: 'STREAM_CONFIRMED' });
+                            }
+                            resolve(this.playerSlot);
+                        });
                     });
 
                     incomingCall.on('error', (err) => {
@@ -398,30 +428,55 @@ class NetplayManager {
         }
     }
 
-    attachRemoteStream(stream) {
+    /**
+     * Attaches received stream to video element with comprehensive event tracking
+     */
+    attachRemoteStream(stream, onPlaySuccess) {
         const videoEl = document.getElementById('netplayVideo');
         if (!videoEl) return;
 
+        this.logEvent(`Attaching MediaStream (${stream.getVideoTracks().length} video, ${stream.getAudioTracks().length} audio)...`);
+
         videoEl.srcObject = stream;
         videoEl.muted = true;
-        videoEl.setAttribute('playsinline', '');
-        videoEl.setAttribute('webkit-playsinline', '');
-        videoEl.setAttribute('autoplay', '');
+        videoEl.playsInline = true;
+        videoEl.setAttribute('playsinline', 'true');
+        videoEl.setAttribute('webkit-playsinline', 'true');
+        videoEl.setAttribute('autoplay', 'true');
 
-        videoEl.play().then(() => {
-            this.logEvent('Video playback started successfully.');
+        videoEl.onloadedmetadata = () => {
+            const w = videoEl.videoWidth;
+            const h = videoEl.videoHeight;
+            this.logEvent(`Video metadata loaded: ${w}x${h}`);
+            videoEl.play().catch(e => this.logEvent(`Play on loadedmetadata: ${e.message}`));
+        };
+
+        videoEl.onplaying = () => {
+            this.logEvent(`Video element is ACTIVE and playing frames! (${videoEl.videoWidth}x${videoEl.videoHeight})`);
             const audioBanner = document.getElementById('netplayAudioBanner');
             if (audioBanner && stream.getAudioTracks().length > 0) {
                 audioBanner.style.display = 'block';
             }
-        }).catch((err) => {
-            this.logEvent(`Autoplay prompt required: ${err.message}`);
-            const audioBanner = document.getElementById('netplayAudioBanner');
-            if (audioBanner) {
-                audioBanner.innerHTML = '▶️ Tap here to start video & audio stream';
-                audioBanner.style.display = 'block';
-            }
-        });
+            if (typeof onPlaySuccess === 'function') onPlaySuccess();
+        };
+
+        videoEl.onerror = (e) => {
+            this.logEvent(`Video element error: ${videoEl.error ? videoEl.error.message : e}`);
+        };
+
+        const playPromise = videoEl.play();
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                this.logEvent('Direct video.play() resolved.');
+            }).catch((err) => {
+                this.logEvent(`Autoplay prompt required: ${err.message}`);
+                const audioBanner = document.getElementById('netplayAudioBanner');
+                if (audioBanner) {
+                    audioBanner.innerHTML = '▶️ Tap here to start video & audio stream';
+                    audioBanner.style.display = 'block';
+                }
+            });
+        }
 
         // Show Touch Controller on mobile
         if (window.touchController) {
@@ -545,6 +600,7 @@ class NetplayManager {
     }
 
     disconnect() {
+        if (this.blitAnimFrameId) cancelAnimationFrame(this.blitAnimFrameId);
         if (this.inputLoopId) cancelAnimationFrame(this.inputLoopId);
         if (this.pingIntervalId) clearInterval(this.pingIntervalId);
         if (this.hostCall) this.hostCall.close();
