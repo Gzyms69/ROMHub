@@ -1,0 +1,10 @@
+wing: romhub
+rooms:
+- name: css
+  description: Files from css/
+  keywords:
+  - css
+  - css
+- name: general
+  description: Files that don't fit other rooms
+  keywords: []
