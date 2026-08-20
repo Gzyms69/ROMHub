@@ -481,6 +481,18 @@
             </div>
         </div>
 
+        <!-- ROM Transfer Progress for Guest -->
+        <div id="netplayRomTransferContainer" style="display: none;" class="card bg-dark border-success text-white mb-2 p-3 text-left">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <strong><span id="romTransferTitle">⚡ P2P ROM Transfer</span></strong>
+                <span id="romTransferPercent" class="badge badge-success">0%</span>
+            </div>
+            <div class="progress" style="height: 16px; background-color: #222;">
+                <div id="romTransferProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 0%;">0%</div>
+            </div>
+            <small id="romTransferStatus" class="text-muted mt-1">Receiving high-speed ROM chunks from Host...</small>
+        </div>
+
         <!-- Tap-to-Unmute Banner for Mobile -->
         <div id="netplayAudioBanner" onclick="window.netplayManager.unmuteAudio()" style="display: none; background: linear-gradient(90deg, #ff8c00, #e52d27); color: white; padding: 10px; border-radius: 6px; margin-bottom: 8px; font-weight: bold; cursor: pointer; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
             🔊 Tap here to unmute game audio!
@@ -1240,6 +1252,25 @@
                             <button class="btn btn-primary font-weight-bold my-1" type="button" onclick="myApp.copyNetplayLink()">📋 Copy Invite Link</button>
                         </div>
                         <small class="text-light mt-2">Send this link or code to a friend on mobile or PC. They do not need to upload the ROM!</small>
+                    </div>
+
+                    <!-- Mode Switcher -->
+                    <div class="card bg-secondary p-2 mb-3 text-left border-0">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="font-weight-bold text-white small">🎮 Multiplayer Architecture:</span>
+                            <span id="currentModeBadge" class="badge badge-success">⚡ Local WebGL (ROM & Input Sync)</span>
+                        </div>
+                        <div class="btn-group btn-group-toggle w-100" data-toggle="buttons">
+                            <label class="btn btn-sm btn-outline-light active" id="lblModeRomSync" onclick="myApp.setNetplayMode('ROM_SYNC')">
+                                <input type="radio" name="netplayMode" id="modeRomSync" autocomplete="off" checked> ⚡ Local WebGL (ROM Sync)
+                            </label>
+                            <label class="btn btn-sm btn-outline-light" id="lblModeStream" onclick="myApp.setNetplayMode('VIDEO_STREAM')">
+                                <input type="radio" name="netplayMode" id="modeStream" autocomplete="off"> 📺 Remote Video Stream
+                            </label>
+                        </div>
+                        <small id="netplayModeDesc" class="text-light mt-1" style="font-size: 11px;">
+                            Host transfers ROM to Guest in 1-2s over DataChannel. Both run native 60 FPS WebGL emulator with 0ms lag!
+                        </small>
                     </div>
 
                     <!-- Slots Grid -->

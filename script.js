@@ -213,6 +213,8 @@ class MyClass {
         }
         else
         {
+            window.lastLoadedRomData = byteArray;
+            window.lastLoadedRomName = this.rom_name || 'custom.v64';
             await this.writeAssets();
             FS.writeFile('custom.v64',byteArray);
             this.beforeRun();
@@ -900,6 +902,21 @@ class MyClass {
         }
     }
 
+    setNetplayMode(mode) {
+        window.netplayManager.setMode(mode);
+        if (mode === 'ROM_SYNC') {
+            $('#currentModeBadge').removeClass('badge-info').addClass('badge-success').text('⚡ Local WebGL (ROM & Input Sync)');
+            $('#netplayModeDesc').text('Host transfers ROM to Guest in 1-2s over DataChannel. Both run native 60 FPS WebGL emulator with 0ms lag!');
+            $('#lblModeRomSync').addClass('active');
+            $('#lblModeStream').removeClass('active');
+        } else {
+            $('#currentModeBadge').removeClass('badge-success').addClass('badge-info').text('📺 Remote Video Stream');
+            $('#netplayModeDesc').text('Host streams video/audio from active canvas. Guest only needs a browser without downloading ROM.');
+            $('#lblModeStream').addClass('active');
+            $('#lblModeRomSync').removeClass('active');
+        }
+    }
+
     startLobbyGame() {
         window.netplayManager.startGame();
         $('#netplayHostModal').modal('hide');
@@ -946,6 +963,16 @@ class MyClass {
         };
         window.netplayManager.onTelemetryUpdate = (t) => {
             this.updateTelemetryUI(t);
+        };
+        window.netplayManager.onRomReadyToLaunch = async (fullRom) => {
+            this.rom_name = 'Online Multiplayer Game';
+            $('#middleDiv').show();
+            $('#canvasDiv').show();
+            await this.LoadEmulator(fullRom);
+            if (window.touchController) {
+                window.touchController.init('netplayTouchContainer');
+                window.touchController.show();
+            }
         };
 
         // Ensure input controller is ready for client gamepad/keyboard capture

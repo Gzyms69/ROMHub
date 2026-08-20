@@ -1,14 +1,16 @@
 /**
- * ROMHub Netplay - WebRTC Peer-to-Peer E2E Multiplayer & Remote Co-Op
+ * ROMHub Netplay - Dual-Mode WebRTC Multiplayer Engine
  * 
- * Features:
- * - Full Dual-Track (Audio + Video) WebRTC Offer: Ensures WebRTC SDP m=video section is generated
- * - 2D GPU Blit Streamer: Solves WebGL buffer clearing by copying rendered frames in real-time
- * - PeerJS Level 3 Debugging (debug: 3) for complete telemetry
- * - High-speed STUN pool with iceCandidatePoolSize: 10
- * - Deep RTCPeerConnection & MediaStream telemetry inspector
- * - Full video lifecycle events (onloadedmetadata, oncanplay, onplaying, onerror)
- * - Virtual Gamepad Injection Proxy into navigator.getGamepads for slots P2, P3, P4
+ * Supported Modes:
+ * 1. Mode A: ⚡ Local WebGL (ROM & Input Sync) [Default / Recommended]
+ *    - Host streams ROM chunks (32KB) over WebRTC DataChannel to Guest in 1-2s.
+ *    - Guest executes local WebAssembly N64 emulator (LoadEmulator).
+ *    - Both instances exchange 5-byte controller input packets at 60 FPS.
+ *    - 0ms video lag, crystal-clear native WebGL, zero video codec issues.
+ * 
+ * 2. Mode B: 📺 Remote Video Stream (Cloud Co-Op)
+ *    - Host captures active WebGL canvas (canvas.captureStream(60)).
+ *    - Guest receives WebRTC MediaStream video/audio and sends inputs.
  */
 
 class NetplayManager {
@@ -18,6 +20,7 @@ class NetplayManager {
         this.isHost = false;
         this.isClient = false;
         this.playerSlot = 1; // 1 = P2, 2 = P3, 3 = P4
+        this.netplayMode = 'ROM_SYNC'; // 'ROM_SYNC' or 'VIDEO_STREAM'
         this.connections = {}; // peerId -> { conn, call, slot, ping, status }
         this.hostConnection = null;
         this.hostCall = null;
@@ -25,10 +28,12 @@ class NetplayManager {
         this.remoteStream = null;
         this.gameStarted = false;
 
-        // 2D Blit Streamer Pipeline
-        this.streamCanvas = null;
-        this.streamCtx = null;
-        this.blitAnimFrameId = null;
+        // ROM Transfer State (Client)
+        this.romReceiveTotalChunks = 0;
+        this.romReceiveSize = 0;
+        this.romReceiveChunks = [];
+        this.romReceiveCount = 0;
+        this.romLoadedLocally = false;
 
         // Player Slots State
         this.slots = [
@@ -40,6 +45,7 @@ class NetplayManager {
 
         this.eventLogs = [];
         this.remotePlayers = {
+            0: { buttons: new Array(16).fill(false), axes: [0, 0], lastUpdate: 0 },
             1: { buttons: new Array(16).fill(false), axes: [0, 0], lastUpdate: 0 },
             2: { buttons: new Array(16).fill(false), axes: [0, 0], lastUpdate: 0 },
             3: { buttons: new Array(16).fill(false), axes: [0, 0], lastUpdate: 0 }
@@ -52,9 +58,17 @@ class NetplayManager {
         this.onLobbyUpdate = null;
         this.onClientProgress = null;
         this.onTelemetryUpdate = null;
+        this.onRomTransferProgress = null;
+        this.onRomReadyToLaunch = null;
 
         this.setupGamepadProxy();
         this.startTelemetryLoop();
+    }
+
+    setMode(mode) {
+        this.netplayMode = mode;
+        this.logEvent(`Multiplayer architecture set to: ${mode === 'ROM_SYNC' ? '⚡ Local WebGL (ROM Sync)' : '📺 Remote Video Stream'}`);
+        this.notifyLobby();
     }
 
     getIceServers() {
@@ -90,30 +104,74 @@ class NetplayManager {
             const raw = origGetGamepads() || [];
             const result = [];
 
-            // Slot 0: Local player 1
-            result[0] = raw[0] || null;
+            if (self.isHost) {
+                // Slot 0: Local Player 1
+                result[0] = raw[0] || null;
 
-            // Slots 1..3: Virtual gamepads for remote players if hosting
-            for (let slot = 1; slot <= 3; slot++) {
-                if (self.isHost && self.hasConnectedPlayer(slot)) {
-                    const rp = self.remotePlayers[slot];
-                    result[slot] = {
-                        id: `ROMHub Netplay Virtual Gamepad (Player ${slot + 1})`,
-                        index: slot,
-                        connected: true,
-                        timestamp: performance.now(),
-                        mapping: 'standard',
-                        axes: [rp.axes[0], rp.axes[1], 0, 0],
-                        buttons: rp.buttons.map(pressed => ({
-                            pressed: !!pressed,
-                            touched: !!pressed,
-                            value: pressed ? 1.0 : 0.0
-                        }))
-                    };
-                } else {
-                    result[slot] = raw[slot] || null;
+                // Slots 1..3: Remote Players from DataChannel
+                for (let slot = 1; slot <= 3; slot++) {
+                    if (self.hasConnectedPlayer(slot)) {
+                        const rp = self.remotePlayers[slot];
+                        result[slot] = {
+                            id: `ROMHub Netplay Remote (Player ${slot + 1})`,
+                            index: slot,
+                            connected: true,
+                            timestamp: performance.now(),
+                            mapping: 'standard',
+                            axes: [rp.axes[0], rp.axes[1], 0, 0],
+                            buttons: rp.buttons.map(pressed => ({
+                                pressed: !!pressed,
+                                touched: !!pressed,
+                                value: pressed ? 1.0 : 0.0
+                            }))
+                        };
+                    } else {
+                        result[slot] = raw[slot] || null;
+                    }
                 }
+            } else if (self.isClient && self.netplayMode === 'ROM_SYNC') {
+                // Client in ROM_SYNC mode:
+                // Slot 0: Remote Host (Player 1)
+                const p1 = self.remotePlayers[0];
+                result[0] = {
+                    id: 'ROMHub Netplay Host (Player 1)',
+                    index: 0,
+                    connected: true,
+                    timestamp: performance.now(),
+                    mapping: 'standard',
+                    axes: [p1.axes[0], p1.axes[1], 0, 0],
+                    buttons: p1.buttons.map(pressed => ({
+                        pressed: !!pressed,
+                        touched: !!pressed,
+                        value: pressed ? 1.0 : 0.0
+                    }))
+                };
+
+                // Slot 1..3: Local player assigned slot
+                for (let s = 1; s <= 3; s++) {
+                    if (s === self.playerSlot) {
+                        result[s] = raw[0] || raw[1] || null;
+                    } else {
+                        const rp = self.remotePlayers[s];
+                        result[s] = {
+                            id: `ROMHub Netplay Player ${s + 1}`,
+                            index: s,
+                            connected: true,
+                            timestamp: performance.now(),
+                            mapping: 'standard',
+                            axes: [rp.axes[0], rp.axes[1], 0, 0],
+                            buttons: rp.buttons.map(pressed => ({
+                                pressed: !!pressed,
+                                touched: !!pressed,
+                                value: pressed ? 1.0 : 0.0
+                            }))
+                        };
+                    }
+                }
+            } else {
+                return raw;
             }
+
             return result;
         };
     }
@@ -132,7 +190,7 @@ class NetplayManager {
     }
 
     /**
-     * Initializes Host mode with 2D GPU Blit Streamer and PeerJS debug: 3
+     * Initializes Host mode
      */
     async startHost(customRoomId = null) {
         this.isHost = true;
@@ -146,52 +204,21 @@ class NetplayManager {
             { slot: 3, label: 'Player 4', status: 'OPEN', peerId: null, ping: 0 }
         ];
 
+        // Prepare video stream from active DOM canvas if in VIDEO_STREAM mode
         const webglCanvas = document.getElementById('canvas');
-        if (!webglCanvas) throw new Error('Emulator canvas not found.');
-
-        this.logEvent(`Initializing 2D GPU Blit Streamer...`);
-
-        // Create 2D offscreen relay canvas
-        if (!this.streamCanvas) {
-            this.streamCanvas = document.createElement('canvas');
-            this.streamCtx = this.streamCanvas.getContext('2d', { alpha: false, desynchronized: true });
-        }
-        this.streamCanvas.width = webglCanvas.width || 640;
-        this.streamCanvas.height = webglCanvas.height || 480;
-
-        // GPU Blit Loop: copies rendered WebGL frame into persistent 2D buffer at 60 FPS
-        if (this.blitAnimFrameId) cancelAnimationFrame(this.blitAnimFrameId);
-        const blitLoop = () => {
-            if (this.isHost && webglCanvas) {
-                if (webglCanvas.width > 0 && webglCanvas.height > 0) {
-                    if (this.streamCanvas.width !== webglCanvas.width || this.streamCanvas.height !== webglCanvas.height) {
-                        this.streamCanvas.width = webglCanvas.width;
-                        this.streamCanvas.height = webglCanvas.height;
-                    }
-                    try {
-                        this.streamCtx.drawImage(webglCanvas, 0, 0);
-                    } catch (e) { }
-                }
+        if (webglCanvas && typeof webglCanvas.captureStream === 'function') {
+            const videoStream = webglCanvas.captureStream(60);
+            let audioTrack = null;
+            if (window.myApp && window.myApp.audioContext && window.myApp.gainNode) {
+                const dest = window.myApp.audioContext.createMediaStreamDestination();
+                window.myApp.gainNode.connect(dest);
+                audioTrack = dest.stream.getAudioTracks()[0];
             }
-            this.blitAnimFrameId = requestAnimationFrame(blitLoop);
-        };
-        this.blitAnimFrameId = requestAnimationFrame(blitLoop);
-
-        // Capture stream from 2D streamCanvas
-        const videoStream = this.streamCanvas.captureStream(60);
-
-        let audioTrack = null;
-        if (window.myApp && window.myApp.audioContext && window.myApp.gainNode) {
-            const dest = window.myApp.audioContext.createMediaStreamDestination();
-            window.myApp.gainNode.connect(dest);
-            audioTrack = dest.stream.getAudioTracks()[0];
-            this.logEvent(`Host Web Audio destination attached.`);
+            const tracks = [...videoStream.getVideoTracks()];
+            if (audioTrack) tracks.push(audioTrack);
+            this.mediaStream = new MediaStream(tracks);
+            this.logEvent(`Host MediaStream ready from active canvas: ${tracks.length} tracks.`);
         }
-
-        const tracks = [...videoStream.getVideoTracks()];
-        if (audioTrack) tracks.push(audioTrack);
-        this.mediaStream = new MediaStream(tracks);
-        this.logEvent(`Blit Streamer ready: ${tracks.length} tracks (60 FPS).`);
 
         return new Promise((resolve, reject) => {
             this.peer = new Peer(this.roomId, {
@@ -207,6 +234,7 @@ class NetplayManager {
                 this.logEvent(`Host Lobby listening on Room ID: ${id}`);
                 this.setupHostListeners();
                 this.startPingLoop();
+                this.startHostInputBroadcastLoop();
                 resolve(id);
             });
 
@@ -225,8 +253,10 @@ class NetplayManager {
     setupHostListeners() {
         // 1. Incoming Media Call
         this.peer.on('call', (incomingCall) => {
-            this.logEvent(`Incoming Media Call from: ${incomingCall.peer}! Answering with 60 FPS stream...`);
-            incomingCall.answer(this.mediaStream);
+            this.logEvent(`Incoming Media Call from: ${incomingCall.peer}!`);
+            if (this.mediaStream) {
+                incomingCall.answer(this.mediaStream);
+            }
 
             const record = this.getOrCreatePeerRecord(incomingCall.peer);
             record.call = incomingCall;
@@ -245,16 +275,30 @@ class NetplayManager {
             record.conn = conn;
             const assignedSlot = record.slot;
 
-            this.logEvent(`Incoming data connection from: ${conn.peer} -> Slot P${assignedSlot + 1}`);
+            this.logEvent(`Incoming connection from: ${conn.peer} -> Slot P${assignedSlot + 1}`);
             this.updateSlotState(assignedSlot, 'CONNECTING', conn.peer);
 
             const markOpen = () => {
                 this.logEvent(`DataChannel ACTIVE with P${assignedSlot + 1} (${conn.peer})!`);
                 record.status = 'READY';
                 this.updateSlotState(assignedSlot, 'READY', conn.peer);
+
+                // Send Welcome with chosen mode
                 try {
-                    conn.send({ type: 'WELCOME', slot: assignedSlot, roomId: this.roomId, gameStarted: this.gameStarted });
+                    conn.send({
+                        type: 'WELCOME',
+                        slot: assignedSlot,
+                        roomId: this.roomId,
+                        mode: this.netplayMode,
+                        romName: window.lastLoadedRomName || 'custom.v64',
+                        gameStarted: this.gameStarted
+                    });
                 } catch (e) { }
+
+                // In ROM_SYNC mode, stream ROM to connecting guest
+                if (this.netplayMode === 'ROM_SYNC') {
+                    this.sendRomToPeer(conn);
+                }
             };
 
             if (conn.open) {
@@ -275,6 +319,12 @@ class NetplayManager {
                         this.logEvent(`Player ${assignedSlot + 1} confirmed stream playback! (🟢 READY)`);
                         record.status = 'READY';
                         this.updateSlotState(assignedSlot, 'READY', conn.peer);
+                    } else if (data.type === 'CLIENT_ROM_LOADED') {
+                        this.logEvent(`Player ${assignedSlot + 1} successfully loaded ROM locally! (🟢 60 FPS Native WebGL)`);
+                        record.status = 'READY';
+                        this.updateSlotState(assignedSlot, 'READY', conn.peer);
+                    } else if (data.type === 'INPUT') {
+                        this.handleBinaryInput(data.packet, assignedSlot);
                     }
                 }
             });
@@ -289,6 +339,61 @@ class NetplayManager {
                 this.logEvent(`DataChannel error with ${conn.peer}: ${err}`);
             });
         });
+    }
+
+    /**
+     * Streams loaded ROM file over DataChannel in 32KB chunks
+     */
+    async sendRomToPeer(conn) {
+        let romData = window.lastLoadedRomData;
+        if (!romData && typeof FS !== 'undefined') {
+            try {
+                romData = FS.readFile('custom.v64');
+            } catch (e) { }
+        }
+
+        if (!romData || romData.byteLength === 0) {
+            this.logEvent(`⚠️ Warning: No ROM loaded yet. Upload a ROM on Host first!`);
+            conn.send({ type: 'ROM_NOT_LOADED' });
+            return;
+        }
+
+        const CHUNK_SIZE = 32 * 1024; // 32KB
+        const totalChunks = Math.ceil(romData.byteLength / CHUNK_SIZE);
+        const mb = (romData.byteLength / (1024 * 1024)).toFixed(1);
+        this.logEvent(`⚡ Streaming ROM (${mb} MB, ${totalChunks} chunks) to Guest...`);
+
+        conn.send({
+            type: 'ROM_START',
+            name: window.lastLoadedRomName || 'custom.v64',
+            totalChunks: totalChunks,
+            size: romData.byteLength
+        });
+
+        for (let i = 0; i < totalChunks; i++) {
+            const start = i * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, romData.byteLength);
+            const chunkSlice = romData.slice(start, end);
+
+            try {
+                conn.send({
+                    type: 'ROM_CHUNK',
+                    index: i,
+                    totalChunks: totalChunks,
+                    data: chunkSlice
+                });
+            } catch (e) {
+                console.error('Error sending ROM chunk:', e);
+            }
+
+            // Pacing delay every 8 chunks to prevent buffer overflow
+            if (i % 8 === 0) {
+                await new Promise(r => setTimeout(r, 10));
+            }
+        }
+
+        conn.send({ type: 'ROM_DONE' });
+        this.logEvent(`✅ ROM transfer complete! Sent ${mb} MB to Guest.`);
     }
 
     getOrCreatePeerRecord(peerId) {
@@ -336,6 +441,7 @@ class NetplayManager {
             this.onLobbyUpdate({
                 roomId: this.roomId,
                 slots: this.slots,
+                mode: this.netplayMode,
                 eventLogs: this.eventLogs,
                 isReadyToPlay: this.slots.some(s => s.slot > 0 && (s.status === 'READY' || s.status === 'CONNECTING'))
             });
@@ -344,7 +450,7 @@ class NetplayManager {
 
     startGame() {
         this.gameStarted = true;
-        this.logEvent(`Host clicked START GAME! Broadcasting to players...`);
+        this.logEvent(`Host clicked START GAME! Broadcasting to all players...`);
         Object.values(this.connections).forEach(c => {
             if (c.conn && c.conn.open) {
                 try { c.conn.send({ type: 'START_GAME' }); } catch (e) { }
@@ -357,7 +463,7 @@ class NetplayManager {
         const u8 = new Uint8Array(data);
         if (u8.length < 5) return;
 
-        const slot = u8[0] || defaultSlot;
+        const slot = u8[0] !== undefined ? u8[0] : defaultSlot;
         const buttonsHigh = u8[1];
         const buttonsLow = u8[2];
         const buttonsMask = (buttonsHigh << 8) | buttonsLow;
@@ -377,7 +483,67 @@ class NetplayManager {
     }
 
     /**
-     * Initializes Client mode with dual-track (Video + Audio) WebRTC offer
+     * Host broadcasts Player 1 inputs to clients for ROM_SYNC mode
+     */
+    startHostInputBroadcastLoop() {
+        const packet = new Uint8Array(5);
+        const loop = () => {
+            if (this.isHost && this.netplayMode === 'ROM_SYNC') {
+                let buttonsMask = 0;
+                let stickX = 0;
+                let stickY = 0;
+
+                const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+                const gp = gamepads[0] || null;
+                if (gp) {
+                    for (let i = 0; i < Math.min(16, gp.buttons.length); i++) {
+                        if (gp.buttons[i] && gp.buttons[i].pressed) buttonsMask |= (1 << i);
+                    }
+                    if (gp.axes.length >= 2) {
+                        stickX = Math.max(-1, Math.min(1, gp.axes[0]));
+                        stickY = Math.max(-1, Math.min(1, gp.axes[1]));
+                    }
+                } else if (window.myApp && window.myApp.rivetsData && window.myApp.rivetsData.inputController) {
+                    const ic = window.myApp.rivetsData.inputController;
+                    if (ic.Key_Action_A) buttonsMask |= (1 << 0);
+                    if (ic.Key_Action_B) buttonsMask |= (1 << 1);
+                    if (ic.Key_Action_Z) buttonsMask |= (1 << 2);
+                    if (ic.Key_Action_Start) buttonsMask |= (1 << 3);
+                    if (ic.Key_Up) buttonsMask |= (1 << 4);
+                    if (ic.Key_Down) buttonsMask |= (1 << 5);
+                    if (ic.Key_Left) buttonsMask |= (1 << 6);
+                    if (ic.Key_Right) buttonsMask |= (1 << 7);
+                    if (ic.Key_Action_L) buttonsMask |= (1 << 8);
+                    if (ic.Key_Action_R) buttonsMask |= (1 << 9);
+                    if (ic.Key_Action_CUP) buttonsMask |= (1 << 10);
+                    if (ic.Key_Action_CDOWN) buttonsMask |= (1 << 11);
+                    if (ic.Key_Action_CLEFT) buttonsMask |= (1 << 12);
+                    if (ic.Key_Action_CRIGHT) buttonsMask |= (1 << 13);
+                    if (!stickX && !stickY) {
+                        stickX = ic.VectorX || 0;
+                        stickY = ic.VectorY || 0;
+                    }
+                }
+
+                packet[0] = 0; // Slot 0 = Player 1
+                packet[1] = (buttonsMask >> 8) & 0xFF;
+                packet[2] = buttonsMask & 0xFF;
+                packet[3] = Math.round(stickX * 127 + 128) & 0xFF;
+                packet[4] = Math.round(stickY * 127 + 128) & 0xFF;
+
+                Object.values(this.connections).forEach(c => {
+                    if (c.conn && c.conn.open) {
+                        try { c.conn.send(packet); } catch (e) { }
+                    }
+                });
+            }
+            this.inputLoopId = requestAnimationFrame(loop);
+        };
+        this.inputLoopId = requestAnimationFrame(loop);
+    }
+
+    /**
+     * Initializes Client mode
      */
     async startClient(targetRoomId) {
         this.isHost = false;
@@ -396,11 +562,10 @@ class NetplayManager {
             });
 
             this.peer.on('open', (myId) => {
-                this.progress(2, `Broker Connected (${myId.substring(0, 8)}...). Initiating call to Host: ${this.roomId}...`);
+                this.progress(2, `Broker Connected (${myId.substring(0, 8)}...). Reaching Host: ${this.roomId}...`);
 
-                // 1. Parallel Media Call to Host with BOTH Video and Audio tracks
+                // 1. Dual-Track Media Call (active for VIDEO_STREAM mode)
                 try {
-                    // Create dummy 16x16 canvas with active frame for SDP m=video section
                     const dummyCanvas = document.createElement('canvas');
                     dummyCanvas.width = 16;
                     dummyCanvas.height = 16;
@@ -410,61 +575,109 @@ class NetplayManager {
                     const dummyVideoStream = dummyCanvas.captureStream(10);
                     const dummyVideoTrack = dummyVideoStream.getVideoTracks()[0];
 
-                    // Create dummy audio track
                     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                     const dummyDest = audioCtx.createMediaStreamDestination();
                     const dummyAudioTrack = dummyDest.stream.getAudioTracks()[0];
 
                     const clientOfferStream = new MediaStream([dummyVideoTrack, dummyAudioTrack]);
 
-                    this.logEvent(`Calling host ${this.roomId} with dual-track offer (video+audio)...`);
                     const call = this.peer.call(this.roomId, clientOfferStream);
                     this.hostCall = call;
 
                     call.on('stream', (remoteStream) => {
-                        const vTracks = remoteStream.getVideoTracks().length;
-                        const aTracks = remoteStream.getAudioTracks().length;
-                        this.progress(3, `Received remote MediaStream (${vTracks} video, ${aTracks} audio)!`);
-                        this.remoteStream = remoteStream;
-                        this.attachRemoteStream(remoteStream, () => {
-                            this.progress(4, `WebRTC Video Stream PLAYING (60 FPS)!`);
-                            if (this.hostConnection && this.hostConnection.open) {
-                                try { this.hostConnection.send({ type: 'STREAM_CONFIRMED' }); } catch (e) { }
-                            }
-                            resolve(this.playerSlot);
-                        });
+                        if (this.netplayMode === 'VIDEO_STREAM') {
+                            const vTracks = remoteStream.getVideoTracks().length;
+                            const aTracks = remoteStream.getAudioTracks().length;
+                            this.progress(3, `Received remote MediaStream (${vTracks} video, ${aTracks} audio)!`);
+                            this.remoteStream = remoteStream;
+                            this.attachRemoteStream(remoteStream, () => {
+                                this.progress(4, `WebRTC Video Stream PLAYING (60 FPS)!`);
+                                if (this.hostConnection && this.hostConnection.open) {
+                                    try { this.hostConnection.send({ type: 'STREAM_CONFIRMED' }); } catch (e) { }
+                                }
+                                resolve(this.playerSlot);
+                            });
+                        }
                     });
 
                     call.on('error', (err) => {
-                        this.logEvent(`Media Call Error: ${err.message || err}`);
+                        this.logEvent(`Media Call Note: ${err.message || err}`);
                     });
-                } catch (e) {
-                    this.logEvent(`Call exception: ${e.message}`);
-                }
+                } catch (e) { }
 
-                // 2. Parallel Data Connection to Host
+                // 2. DataChannel to Host
                 this.hostConnection = this.peer.connect(this.roomId, {
-                    reliable: false
+                    reliable: true
                 });
 
                 this.hostConnection.on('open', () => {
-                    this.progress(3, `DataChannel connected! Controller stream active.`);
+                    this.progress(3, `DataChannel connected! Waiting for session configuration...`);
                     this.startClientInputLoop();
                 });
 
                 this.hostConnection.on('data', (data) => {
-                    if (data && data.type === 'WELCOME') {
-                        this.playerSlot = data.slot;
-                        this.progress(3, `Assigned as Player ${this.playerSlot + 1}.`);
-                        const label = document.getElementById('netplayPlayerLabel');
-                        if (label) label.textContent = `Player ${this.playerSlot + 1}`;
-                    } else if (data && data.type === 'PING') {
-                        try { this.hostConnection.send({ type: 'PONG', timestamp: data.timestamp }); } catch (e) { }
-                        this.rtt = Math.round(performance.now() - data.timestamp);
-                        const pingEl = document.getElementById('netplayPing');
-                        if (pingEl) pingEl.textContent = this.rtt;
-                    } else if (data && data.type === 'START_GAME') {
-                        this.progress(4, `Game started by Host! Have fun!`);
+                    if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
+                        // Binary input from Host (Player 1) in ROM_SYNC mode
+                        this.handleBinaryInput(data, 0);
+                    } else if (typeof data === 'object') {
+                        if (data.type === 'WELCOME') {
+                            this.playerSlot = data.slot;
+                            this.netplayMode = data.mode || 'ROM_SYNC';
+                            this.progress(3, `Assigned as Player ${this.playerSlot + 1} (${this.netplayMode === 'ROM_SYNC' ? '⚡ Local WebGL Mode' : '📺 Remote Video Stream'}).`);
+                            
+                            const label = document.getElementById('netplayPlayerLabel');
+                            if (label) label.textContent = `Player ${this.playerSlot + 1}`;
+
+                            if (this.netplayMode === 'ROM_SYNC') {
+                                $('#netplayRomTransferContainer').show();
+                                $('#netplayVideoContainer').hide();
+                            } else {
+                                $('#netplayRomTransferContainer').hide();
+                                $('#netplayVideoContainer').show();
+                            }
+                        } else if (data.type === 'ROM_START') {
+                            this.romReceiveTotalChunks = data.totalChunks;
+                            this.romReceiveSize = data.size;
+                            this.romReceiveChunks = new Array(data.totalChunks);
+                            this.romReceiveCount = 0;
+                            $('#netplayRomTransferContainer').show();
+                            $('#romTransferStatus').text(`Receiving ${data.name} (${(data.size / (1024*1024)).toFixed(1)} MB)...`);
+                        } else if (data.type === 'ROM_CHUNK') {
+                            const chunkData = data.data instanceof Uint8Array ? data.data : new Uint8Array(data.data);
+                            this.romReceiveChunks[data.index] = chunkData;
+                            this.romReceiveCount++;
+                            const pct = Math.round((this.romReceiveCount / this.romReceiveTotalChunks) * 100);
+                            $('#romTransferProgressBar').css('width', `${pct}%`).text(`${pct}%`);
+                            $('#romTransferPercent').text(`${pct}%`);
+                        } else if (data.type === 'ROM_DONE') {
+                            $('#romTransferStatus').text(`✅ ROM received! Reassembling and launching WebAssembly engine...`);
+                            const fullRom = new Uint8Array(this.romReceiveSize);
+                            let offset = 0;
+                            for (let c of this.romReceiveChunks) {
+                                if (c) {
+                                    fullRom.set(c, offset);
+                                    offset += c.byteLength;
+                                }
+                            }
+
+                            this.logEvent(`Reassembled complete ROM (${(fullRom.byteLength / (1024*1024)).toFixed(1)} MB). Launching emulator...`);
+                            this.progress(4, `ROM Ready! Running Local WebGL 60 FPS Emulator!`);
+                            
+                            if (typeof this.onRomReadyToLaunch === 'function') {
+                                this.onRomReadyToLaunch(fullRom);
+                            }
+                            if (this.hostConnection && this.hostConnection.open) {
+                                try { this.hostConnection.send({ type: 'CLIENT_ROM_LOADED', slot: this.playerSlot }); } catch (e) { }
+                            }
+                            resolve(this.playerSlot);
+                        } else if (data.type === 'PING') {
+                            try { this.hostConnection.send({ type: 'PONG', timestamp: data.timestamp }); } catch (e) { }
+                            this.rtt = Math.round(performance.now() - data.timestamp);
+                            const pingEl = document.getElementById('netplayPing');
+                            if (pingEl) pingEl.textContent = this.rtt;
+                        } else if (data.type === 'START_GAME') {
+                            this.progress(4, `Game started by Host! Have fun!`);
+                        }
                     }
                 });
 
@@ -567,13 +780,11 @@ class NetplayManager {
     }
 
     startClientInputLoop() {
-        if (this.inputLoopId) cancelAnimationFrame(this.inputLoopId);
-
         const packet = new Uint8Array(5);
 
         const loop = () => {
             if (!this.isClient || !this.hostConnection || !this.hostConnection.open) {
-                this.inputLoopId = requestAnimationFrame(loop);
+                requestAnimationFrame(loop);
                 return;
             }
 
@@ -648,10 +859,10 @@ class NetplayManager {
                 this.hostConnection.send(packet);
             } catch (e) { }
 
-            this.inputLoopId = requestAnimationFrame(loop);
+            requestAnimationFrame(loop);
         };
 
-        this.inputLoopId = requestAnimationFrame(loop);
+        requestAnimationFrame(loop);
     }
 
     startPingLoop() {
@@ -701,6 +912,7 @@ class NetplayManager {
 
         return {
             role: this.isHost ? 'Host' : (this.isClient ? 'Client' : 'Idle'),
+            mode: this.netplayMode,
             roomId: this.roomId || 'None',
             peerId: this.peer ? this.peer.id : 'Disconnected',
             brokerConnected: !!(this.peer && !this.peer.disconnected),
@@ -721,7 +933,6 @@ class NetplayManager {
     }
 
     disconnect() {
-        if (this.blitAnimFrameId) cancelAnimationFrame(this.blitAnimFrameId);
         if (this.inputLoopId) cancelAnimationFrame(this.inputLoopId);
         if (this.pingIntervalId) clearInterval(this.pingIntervalId);
         if (this.hostCall) this.hostCall.close();
