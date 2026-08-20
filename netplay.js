@@ -400,11 +400,14 @@ class NetplayManager {
 
                 // 1. Parallel Media Call to Host with BOTH Video and Audio tracks
                 try {
-                    // Create dummy 2x2 canvas to generate a real VideoTrack for SDP m=video section
+                    // Create dummy 16x16 canvas with active frame for SDP m=video section
                     const dummyCanvas = document.createElement('canvas');
-                    dummyCanvas.width = 2;
-                    dummyCanvas.height = 2;
-                    const dummyVideoStream = dummyCanvas.captureStream(1);
+                    dummyCanvas.width = 16;
+                    dummyCanvas.height = 16;
+                    const dummyCtx = dummyCanvas.getContext('2d');
+                    dummyCtx.fillStyle = '#000000';
+                    dummyCtx.fillRect(0, 0, 16, 16);
+                    const dummyVideoStream = dummyCanvas.captureStream(10);
                     const dummyVideoTrack = dummyVideoStream.getVideoTracks()[0];
 
                     // Create dummy audio track

@@ -2,7 +2,6 @@
 <html>
 
 <head>
-    <script src="logger.js"></script>
     <title>ROMHub - Browser N64 Emulator</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="keywords" content="N64 Emulator, N64 JavaScript Emulator, WebAssembly, HTML5, Nintendo 64">
@@ -17,8 +16,12 @@
     <script src="js/FileSaver.min.js"></script>
     <script src="js/nipplejs.min.js"></script>
     <script src="js/peerjs.min.js"></script>
-    <script src="touch_controller.js"></script>
-    <script src="netplay.js"></script>
+    <script>
+        var scriptVer = Date.now();
+        document.write('<script src="logger.js?v=' + scriptVer + '"><\/script>');
+        document.write('<script src="touch_controller.js?v=' + scriptVer + '"><\/script>');
+        document.write('<script src="netplay.js?v=' + scriptVer + '"><\/script>');
+    </script>
     <script>
         function getSystemDarkMode(){
             return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
