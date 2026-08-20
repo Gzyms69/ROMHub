@@ -562,58 +562,21 @@ class NetplayManager {
             });
 
             this.peer.on('open', (myId) => {
-                this.progress(2, `Broker Connected (${myId.substring(0, 8)}...). Reaching Host: ${this.roomId}...`);
+                this.progress(2, `Broker Connected (${myId.substring(0, 8)}...). Connecting to Host: ${this.roomId}...`);
 
-                // 1. Dual-Track Media Call (active for VIDEO_STREAM mode)
-                try {
-                    const dummyCanvas = document.createElement('canvas');
-                    dummyCanvas.width = 16;
-                    dummyCanvas.height = 16;
-                    const dummyCtx = dummyCanvas.getContext('2d');
-                    dummyCtx.fillStyle = '#000000';
-                    dummyCtx.fillRect(0, 0, 16, 16);
-                    const dummyVideoStream = dummyCanvas.captureStream(10);
-                    const dummyVideoTrack = dummyVideoStream.getVideoTracks()[0];
+                // 1. Establish Fast DataChannel First (Single RTCPeerConnection for minimal 5G latency)
+                this.hostConnection = this.peer.connect(this.roomId);
 
-                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    const dummyDest = audioCtx.createMediaStreamDestination();
-                    const dummyAudioTrack = dummyDest.stream.getAudioTracks()[0];
-
-                    const clientOfferStream = new MediaStream([dummyVideoTrack, dummyAudioTrack]);
-
-                    const call = this.peer.call(this.roomId, clientOfferStream);
-                    this.hostCall = call;
-
-                    call.on('stream', (remoteStream) => {
-                        if (this.netplayMode === 'VIDEO_STREAM') {
-                            const vTracks = remoteStream.getVideoTracks().length;
-                            const aTracks = remoteStream.getAudioTracks().length;
-                            this.progress(3, `Received remote MediaStream (${vTracks} video, ${aTracks} audio)!`);
-                            this.remoteStream = remoteStream;
-                            this.attachRemoteStream(remoteStream, () => {
-                                this.progress(4, `WebRTC Video Stream PLAYING (60 FPS)!`);
-                                if (this.hostConnection && this.hostConnection.open) {
-                                    try { this.hostConnection.send({ type: 'STREAM_CONFIRMED' }); } catch (e) { }
-                                }
-                                resolve(this.playerSlot);
-                            });
-                        }
-                    });
-
-                    call.on('error', (err) => {
-                        this.logEvent(`Media Call Note: ${err.message || err}`);
-                    });
-                } catch (e) { }
-
-                // 2. DataChannel to Host
-                this.hostConnection = this.peer.connect(this.roomId, {
-                    reliable: true
-                });
-
-                this.hostConnection.on('open', () => {
+                const onConnOpen = () => {
                     this.progress(3, `DataChannel connected! Waiting for session configuration...`);
                     this.startClientInputLoop();
-                });
+                };
+
+                if (this.hostConnection.open) {
+                    onConnOpen();
+                } else {
+                    this.hostConnection.on('open', onConnOpen);
+                }
 
                 this.hostConnection.on('data', (data) => {
                     if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
@@ -634,6 +597,8 @@ class NetplayManager {
                             } else {
                                 $('#netplayRomTransferContainer').hide();
                                 $('#netplayVideoContainer').show();
+                                // Initiate media call only for VIDEO_STREAM mode
+                                this.initiateMediaCall(resolve);
                             }
                         } else if (data.type === 'ROM_START') {
                             this.romReceiveTotalChunks = data.totalChunks;
@@ -697,6 +662,49 @@ class NetplayManager {
         this.logEvent(`[Step ${step}] ${msg}`);
         if (typeof this.onClientProgress === 'function') {
             this.onClientProgress({ step, message: msg, isError });
+        }
+    }
+
+    initiateMediaCall(onSuccess) {
+        try {
+            const dummyCanvas = document.createElement('canvas');
+            dummyCanvas.width = 16;
+            dummyCanvas.height = 16;
+            const dummyCtx = dummyCanvas.getContext('2d');
+            dummyCtx.fillStyle = '#000000';
+            dummyCtx.fillRect(0, 0, 16, 16);
+            const dummyVideoStream = dummyCanvas.captureStream(10);
+            const dummyVideoTrack = dummyVideoStream.getVideoTracks()[0];
+
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const dummyDest = audioCtx.createMediaStreamDestination();
+            const dummyAudioTrack = dummyDest.stream.getAudioTracks()[0];
+
+            const clientOfferStream = new MediaStream([dummyVideoTrack, dummyAudioTrack]);
+
+            this.logEvent(`Calling host ${this.roomId} for VideoStream...`);
+            const call = this.peer.call(this.roomId, clientOfferStream);
+            this.hostCall = call;
+
+            call.on('stream', (remoteStream) => {
+                const vTracks = remoteStream.getVideoTracks().length;
+                const aTracks = remoteStream.getAudioTracks().length;
+                this.progress(3, `Received remote MediaStream (${vTracks} video, ${aTracks} audio)!`);
+                this.remoteStream = remoteStream;
+                this.attachRemoteStream(remoteStream, () => {
+                    this.progress(4, `WebRTC Video Stream PLAYING (60 FPS)!`);
+                    if (this.hostConnection && this.hostConnection.open) {
+                        try { this.hostConnection.send({ type: 'STREAM_CONFIRMED' }); } catch (e) { }
+                    }
+                    if (typeof onSuccess === 'function') onSuccess(this.playerSlot);
+                });
+            });
+
+            call.on('error', (err) => {
+                this.logEvent(`Media Call Error: ${err.message || err}`);
+            });
+        } catch (e) {
+            this.logEvent(`Media Call Exception: ${e.message}`);
         }
     }
 
