@@ -820,6 +820,114 @@ class MyClass {
             else document.documentElement.removeAttribute("data-darkmode");
         });
     }
+
+    // --- Netplay Multiplayer Integration ---
+    async showNetplayHostModal() {
+        if (this.rivetsData.beforeEmulatorStarted) {
+            toastr.warning('Please load a ROM first before hosting a multiplayer session.');
+            return;
+        }
+        $('#netplayHostModal').modal('show');
+        try {
+            const roomId = await window.netplayManager.startHost();
+            $('#netplayRoomCodeInput').val(roomId);
+            $('#netplayHostStatus').html('<span class="badge badge-success p-2">🟢 P2P Host Ready: ' + roomId + '</span>');
+            
+            window.netplayManager.onStatusChange = (status) => {
+                const list = $('#netplayPlayerList');
+                list.empty();
+                list.append('<li class="list-group-item bg-transparent d-flex justify-content-between align-items-center text-white"><span>👑 Player 1 (Host / You)</span><span class="badge badge-primary">Active</span></li>');
+                
+                if (status.connections && status.connections.length > 0) {
+                    status.connections.forEach(c => {
+                        const slotNum = c.slot + 1;
+                        list.append(`<li class="list-group-item bg-transparent d-flex justify-content-between align-items-center text-white"><span>🎮 Player ${slotNum} (Remote)</span><span class="badge badge-success">${c.ping} ms</span></li>`);
+                    });
+                }
+            };
+        } catch (err) {
+            console.error('Failed to start host:', err);
+            toastr.error('Failed to initialize WebRTC Host: ' + (err.message || err));
+        }
+    }
+
+    showNetplayJoinModal() {
+        $('#netplayJoinModal').modal('show');
+    }
+
+    copyNetplayLink() {
+        const roomId = window.netplayManager.roomId;
+        if (!roomId) return;
+        const url = window.location.origin + window.location.pathname + '#join=' + roomId;
+        navigator.clipboard.writeText(url).then(() => {
+            toastr.info('Invite link copied to clipboard!');
+        }).catch(() => {
+            toastr.info('Room Code: ' + roomId);
+        });
+    }
+
+    async connectNetplay(customCode) {
+        const code = (customCode || $('#netplayJoinCodeInput').val() || '').trim();
+        if (!code) {
+            toastr.error('Please enter a valid Room Code.');
+            return;
+        }
+        $('#netplayJoinModal').modal('hide');
+        toastr.info('Connecting to room ' + code + '...');
+
+        // Hide main setup UI
+        $('#maindiv').hide();
+        $('#middleDiv').hide();
+        $('#netplayClientView').show();
+
+        // Ensure input controller is ready for client gamepad/keyboard capture
+        if (this.rivetsData.inputController) {
+            this.rivetsData.inputController.setupGamePad();
+        }
+
+        try {
+            const slot = await window.netplayManager.startClient(code);
+            const slotNum = slot + 1;
+            $('#netplayPlayerLabel').text(`Player ${slotNum}`);
+            toastr.success(`Connected as Player ${slotNum}!`);
+
+            window.netplayManager.onStatusChange = (status) => {
+                $('#netplayPing').text(status.rtt || '--');
+            };
+        } catch (err) {
+            console.error('Client connection failed:', err);
+            toastr.error('Failed to connect to host: ' + (err.message || err));
+            this.disconnectNetplay();
+        }
+    }
+
+    disconnectNetplay() {
+        window.netplayManager.disconnect();
+        $('#netplayClientView').hide();
+        $('#maindiv').show();
+        $('#middleDiv').show();
+        toastr.info('Disconnected from multiplayer session.');
+    }
+
+    toggleNetplayFullscreen() {
+        const video = document.getElementById('netplayVideo');
+        if (video) {
+            if (video.requestFullscreen) video.requestFullscreen();
+            else if (video.webkitRequestFullscreen) video.webkitRequestFullscreen();
+            else if (video.mozRequestFullScreen) video.mozRequestFullScreen();
+        }
+    }
+
+    checkNetplayHash() {
+        if (window.location.hash && window.location.hash.startsWith('#join=')) {
+            const code = window.location.hash.replace('#join=', '').trim();
+            if (code) {
+                setTimeout(() => {
+                    this.connectNetplay(code);
+                }, 500);
+            }
+        }
+    }
 }
 let myClass = new MyClass();
 window["myApp"] = myClass;
@@ -834,3 +942,4 @@ var script2 = document.createElement('script');
 script2.src = 'input_controller.js?v=' + rando2;
 document.getElementsByTagName('head')[0].appendChild(script2);
 myClass.listenForDarkModeCheckbox();
+myClass.checkNetplayHash();

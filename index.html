@@ -15,6 +15,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/css/toastr.min.css">
     <script src="js/FileSaver.min.js"></script>
     <script src="js/nipplejs.min.js"></script>
+    <script src="js/peerjs.min.js"></script>
+    <script src="netplay.js"></script>
     <script>
         function getSystemDarkMode(){
             return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -152,6 +154,9 @@
             <div rv-if="data.beforeEmulatorStarted">
                 <button id="btnUploadRom" class="btn btn-primary mt-4" onclick="myApp.uploadBrowse()"
                        >Load ROM</button>
+                <button type="button" class="btn btn-success mt-4" onclick="myApp.showNetplayJoinModal()">
+                    Join Online Game
+                </button>
                 <button type="button" class="btn btn-primary mt-4" id="btnRemap" onclick="myApp.showRemapModal()">
                     Settings
                 </button>
@@ -201,6 +206,8 @@
             <div rv-hide="data.beforeEmulatorStarted">
                 <button class="btn btn-primary mt-2 mb-2" 
                     onclick="myApp.newRom()" >New Rom</button>
+                <button class="btn btn-success mt-2 mb-2"
+                    onclick="myApp.showNetplayHostModal()">Play Online (Co-Op)</button>
                 <div class="btn-group mt-2 mb-2">
                     <button type="button" class="btn btn-primary dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
                         Advanced
@@ -268,6 +275,26 @@
         <div id="bottomPanel" rv-hide="data.beforeEmulatorStarted">
         </div>
 
+    </div>
+
+    <!-- Netplay Client Remote View -->
+    <div id="netplayClientView" style="display: none; max-width: 960px; margin: 20px auto; padding: 10px;">
+        <div class="card mb-3 bg-dark border-primary text-white">
+            <div class="card-body py-2 d-flex justify-content-between align-items-center">
+                <div>
+                    <span class="badge badge-success mr-2">🟢 P2P Connected</span>
+                    <strong><span id="netplayPlayerLabel">Player 2</span></strong>
+                    <span class="text-muted ml-3">Ping: <strong id="netplayPing" class="text-info">--</strong> ms</span>
+                </div>
+                <div>
+                    <button class="btn btn-sm btn-outline-info mr-2" onclick="myApp.toggleNetplayFullscreen()">Fullscreen</button>
+                    <button class="btn btn-sm btn-danger" onclick="myApp.disconnectNetplay()">Disconnect</button>
+                </div>
+            </div>
+        </div>
+        <div id="netplayVideoContainer" style="background-color: #000; border-radius: 8px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
+            <!-- Video element dynamically attached by NetplayManager -->
+        </div>
     </div>
 
     <!-- Mobile UX -->
@@ -966,6 +993,65 @@
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
                     <button type="button" onclick="myApp.restoreDefaultKeymappings()" class="btn btn-primary">Restore Defaults</button>
                     <button type="button" class="btn btn-primary" onclick="myApp.saveRemap()">Save changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Netplay Host Modal -->
+    <div class="modal fade" id="netplayHostModal" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-dialog-centered" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">🎮 Host Online Co-Op / Multiplayer</h5>
+                    <button type="button" class="close text-white" data-dismiss="modal">&times;</button>
+                </div>
+                <div class="modal-body text-center">
+                    <p class="text-muted">Invite a friend to play with you! They can join from any browser without needing to upload the ROM.</p>
+                    <div class="form-group">
+                        <label>Your Room Code:</label>
+                        <div class="input-group">
+                            <input type="text" id="netplayRoomCodeInput" class="form-control text-center font-weight-bold" style="font-size: 1.3rem; letter-spacing: 2px;" readonly>
+                            <div class="input-group-append">
+                                <button class="btn btn-primary" type="button" onclick="myApp.copyNetplayLink()">Copy Invite Link</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="netplayHostStatus" class="mb-3">
+                        <span class="badge badge-success p-2">🟢 P2P Host Ready (Waiting for players)</span>
+                    </div>
+                    <h6 class="text-left font-weight-bold">Connected Players:</h6>
+                    <ul id="netplayPlayerList" class="list-group list-group-flush text-left">
+                        <li class="list-group-item bg-transparent d-flex justify-content-between align-items-center text-white">
+                            <span>👑 Player 1 (You / Host)</span>
+                            <span class="badge badge-primary">Active</span>
+                        </li>
+                    </ul>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Netplay Join Modal -->
+    <div class="modal fade" id="netplayJoinModal" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-dialog-centered" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">🎮 Join Online Game</h5>
+                    <button type="button" class="close text-white" data-dismiss="modal">&times;</button>
+                </div>
+                <div class="modal-body text-center">
+                    <p class="text-muted">Enter the 6-character Room Code shared by the Host:</p>
+                    <div class="form-group">
+                        <input type="text" id="netplayJoinCodeInput" class="form-control text-center font-weight-bold" placeholder="e.g. ROM-9821" style="font-size: 1.4rem; text-transform: uppercase;">
+                    </div>
+                    <button class="btn btn-success btn-lg btn-block" onclick="myApp.connectNetplay()">Connect & Play</button>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
                 </div>
             </div>
         </div>
