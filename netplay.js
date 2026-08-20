@@ -2,10 +2,11 @@
  * ROMHub Netplay - WebRTC Peer-to-Peer E2E Multiplayer & Remote Co-Op
  * 
  * Features:
- * - 2D GPU Blit Streamer: Resolves WebGL buffer clearing by copying frames in real-time
- * - H.264 WebRTC hardware video codec prioritization for universal iOS / Android playback
- * - OpenRelay TURN servers for 100% reliable 5G/LTE Carrier NAT traversal
- * - Interactive Multiplayer Lobby with Slot management and Host 'START GAME' trigger
+ * - Parallel Dual-Track WebRTC Negotiation: Media call and DataChannel negotiate simultaneously
+ * - 2D GPU Blit Streamer: Solves WebGL buffer clear by copying rendered frames in real-time
+ * - H.264 WebRTC hardware video codec prioritization for universal mobile (iOS / Android) playback
+ * - OpenRelay TURN servers for 100% reliable 5G/LTE Carrier-Grade NAT traversal
+ * - Interactive Multiplayer Lobby with Slot Deduplication and Host 'START GAME' trigger
  * - Full video lifecycle events (onloadedmetadata, oncanplay, onplaying, onerror)
  * - Virtual Gamepad Injection Proxy into navigator.getGamepads for slots P2, P3, P4
  */
@@ -31,7 +32,7 @@ class NetplayManager {
 
         // Player Slots State
         this.slots = [
-            { slot: 0, label: 'Player 1 (Host)', status: 'EMPTY', peerId: null, ping: 0 },
+            { slot: 0, label: 'Player 1 (Host)', status: 'READY', peerId: 'local', ping: 0 },
             { slot: 1, label: 'Player 2', status: 'WAITING', peerId: null, ping: 0 },
             { slot: 2, label: 'Player 3', status: 'OPEN', peerId: null, ping: 0 },
             { slot: 3, label: 'Player 4', status: 'OPEN', peerId: null, ping: 0 }
@@ -60,6 +61,7 @@ class NetplayManager {
             { urls: 'stun:stun2.l.google.com:19302' },
             { urls: 'stun:stun.cloudflare.com:3478' },
             { urls: 'stun:global.stun.twilio.com:3478' },
+            { urls: 'stun:openrelay.metered.ca:80' },
             // OpenRelay Public TURN Server (Handles strict 5G / Symmetric NATs)
             {
                 urls: [
@@ -123,7 +125,7 @@ class NetplayManager {
     }
 
     hasConnectedPlayer(slot) {
-        return Object.values(this.connections).some(c => c.slot === slot && c.status === 'READY');
+        return Object.values(this.connections).some(c => c.slot === slot && (c.status === 'READY' || c.status === 'CONNECTED'));
     }
 
     generateRoomId() {
@@ -136,15 +138,19 @@ class NetplayManager {
     }
 
     /**
-     * Initializes Host mode with the 2D GPU Blit Streamer
+     * Initializes Host mode with 2D GPU Blit Streamer and parallel listeners
      */
     async startHost(customRoomId = null) {
         this.isHost = true;
         this.isClient = false;
         this.gameStarted = false;
         this.roomId = customRoomId || this.generateRoomId();
-        this.slots[0] = { slot: 0, label: 'Player 1 (Host / You)', status: 'READY', peerId: 'local', ping: 0 };
-        this.slots[1] = { slot: 1, label: 'Player 2', status: 'WAITING', peerId: null, ping: 0 };
+        this.slots = [
+            { slot: 0, label: 'Player 1 (Host / You)', status: 'READY', peerId: 'local', ping: 0 },
+            { slot: 1, label: 'Player 2', status: 'WAITING', peerId: null, ping: 0 },
+            { slot: 2, label: 'Player 3', status: 'OPEN', peerId: null, ping: 0 },
+            { slot: 3, label: 'Player 4', status: 'OPEN', peerId: null, ping: 0 }
+        ];
 
         const webglCanvas = document.getElementById('canvas');
         if (!webglCanvas) throw new Error('Emulator canvas not found.');
@@ -195,7 +201,10 @@ class NetplayManager {
 
         return new Promise((resolve, reject) => {
             this.peer = new Peer(this.roomId, {
-                config: { iceServers: this.getIceServers() }
+                config: {
+                    iceServers: this.getIceServers(),
+                    iceCandidatePoolSize: 10
+                }
             });
 
             this.peer.on('open', (id) => {
@@ -219,32 +228,45 @@ class NetplayManager {
     }
 
     setupHostListeners() {
-        this.peer.on('connection', (conn) => {
-            const assignedSlot = this.getNextAvailableSlot();
-            this.logEvent(`Incoming connection from: ${conn.peer} -> Assigning Slot P${assignedSlot + 1}...`);
+        // 1. Listen for Incoming Media Calls from Clients
+        this.peer.on('call', (incomingCall) => {
+            this.logEvent(`Incoming Media Call from: ${incomingCall.peer}! Answering with 60 FPS stream...`);
+            incomingCall.answer(this.mediaStream);
 
-            const peerRecord = { conn, call: null, slot: assignedSlot, ping: 0, status: 'CONNECTING' };
-            this.connections[conn.peer] = peerRecord;
+            const record = this.getOrCreatePeerRecord(incomingCall.peer);
+            record.call = incomingCall;
+
+            incomingCall.on('close', () => {
+                this.logEvent(`Media call closed with ${incomingCall.peer}`);
+            });
+            incomingCall.on('error', (err) => {
+                this.logEvent(`Media call error with ${incomingCall.peer}: ${err.message}`);
+            });
+        });
+
+        // 2. Listen for Incoming Data Connections from Clients
+        this.peer.on('connection', (conn) => {
+            const record = this.getOrCreatePeerRecord(conn.peer);
+            record.conn = conn;
+            const assignedSlot = record.slot;
+
+            this.logEvent(`Incoming data channel from: ${conn.peer} -> Slot P${assignedSlot + 1}`);
             this.updateSlotState(assignedSlot, 'CONNECTING', conn.peer);
 
-            conn.on('open', () => {
-                this.logEvent(`DataChannel OPEN with ${conn.peer}! Sending welcome...`);
-                conn.send({ type: 'WELCOME', slot: assignedSlot, roomId: this.roomId, gameStarted: this.gameStarted });
+            const markOpen = () => {
+                this.logEvent(`DataChannel ACTIVE with P${assignedSlot + 1} (${conn.peer})!`);
+                record.status = 'READY';
+                this.updateSlotState(assignedSlot, 'READY', conn.peer);
+                try {
+                    conn.send({ type: 'WELCOME', slot: assignedSlot, roomId: this.roomId, gameStarted: this.gameStarted });
+                } catch (e) { }
+            };
 
-                // Host initiates media call with H.264 video stream
-                if (this.mediaStream) {
-                    this.logEvent(`Calling ${conn.peer} with 60 FPS video stream...`);
-                    try {
-                        const call = this.peer.call(conn.peer, this.mediaStream);
-                        peerRecord.call = call;
-
-                        call.on('error', (err) => this.logEvent(`Call error with ${conn.peer}: ${err.message}`));
-                        call.on('close', () => this.logEvent(`Media call closed with ${conn.peer}`));
-                    } catch (e) {
-                        this.logEvent(`Call exception: ${e.message}`);
-                    }
-                }
-            });
+            if (conn.open) {
+                markOpen();
+            } else {
+                conn.on('open', markOpen);
+            }
 
             conn.on('data', (data) => {
                 if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
@@ -252,11 +274,11 @@ class NetplayManager {
                 } else if (typeof data === 'object') {
                     if (data.type === 'PONG') {
                         const now = performance.now();
-                        peerRecord.ping = Math.round(now - data.timestamp);
-                        this.updateSlotPing(assignedSlot, peerRecord.ping);
+                        record.ping = Math.round(now - data.timestamp);
+                        this.updateSlotPing(assignedSlot, record.ping);
                     } else if (data.type === 'STREAM_CONFIRMED') {
                         this.logEvent(`Player ${assignedSlot + 1} confirmed stream playback! (🟢 READY)`);
-                        peerRecord.status = 'READY';
+                        record.status = 'READY';
                         this.updateSlotState(assignedSlot, 'READY', conn.peer);
                     }
                 }
@@ -272,6 +294,24 @@ class NetplayManager {
                 this.logEvent(`DataChannel error with ${conn.peer}: ${err}`);
             });
         });
+    }
+
+    getOrCreatePeerRecord(peerId) {
+        if (this.connections[peerId]) {
+            return this.connections[peerId];
+        }
+
+        // Clean up any stale records
+        const assignedSlot = this.getNextAvailableSlot();
+        const record = {
+            conn: null,
+            call: null,
+            slot: assignedSlot,
+            ping: 0,
+            status: 'CONNECTING'
+        };
+        this.connections[peerId] = record;
+        return record;
     }
 
     getNextAvailableSlot() {
@@ -303,7 +343,7 @@ class NetplayManager {
                 roomId: this.roomId,
                 slots: this.slots,
                 eventLogs: this.eventLogs,
-                isReadyToPlay: this.slots.some(s => s.slot > 0 && s.status === 'READY')
+                isReadyToPlay: this.slots.some(s => s.slot > 0 && (s.status === 'READY' || s.status === 'CONNECTING'))
             });
         }
     }
@@ -313,7 +353,7 @@ class NetplayManager {
         this.logEvent(`Host clicked START GAME! Broadcasting to players...`);
         Object.values(this.connections).forEach(c => {
             if (c.conn && c.conn.open) {
-                c.conn.send({ type: 'START_GAME' });
+                try { c.conn.send({ type: 'START_GAME' }); } catch (e) { }
             }
         });
         this.notifyLobby();
@@ -343,7 +383,7 @@ class NetplayManager {
     }
 
     /**
-     * Initializes Client mode with deep video playback lifecycle tracking
+     * Initializes Client mode with parallel Dual-Track WebRTC call & data channel
      */
     async startClient(targetRoomId) {
         this.isHost = false;
@@ -354,29 +394,62 @@ class NetplayManager {
 
         return new Promise((resolve, reject) => {
             this.peer = new Peer({
-                config: { iceServers: this.getIceServers() }
+                config: {
+                    iceServers: this.getIceServers(),
+                    iceCandidatePoolSize: 10
+                }
             });
 
             this.peer.on('open', (myId) => {
-                this.progress(2, `Connected to broker (${myId}). Reaching Host: ${this.roomId}...`);
+                this.progress(2, `Broker OK (${myId.substring(0, 8)}...). Calling Host ${this.roomId}...`);
 
-                // 1. Establish Data Connection
+                // 1. Parallel Media Call to Host
+                try {
+                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    const dummyDest = audioCtx.createMediaStreamDestination();
+                    const dummyStream = dummyDest.stream;
+
+                    this.logEvent(`Calling host ${this.roomId} for MediaStream...`);
+                    const call = this.peer.call(this.roomId, dummyStream);
+                    this.hostCall = call;
+
+                    call.on('stream', (remoteStream) => {
+                        this.progress(3, `Received remote MediaStream (${remoteStream.getVideoTracks().length} tracks)!`);
+                        this.remoteStream = remoteStream;
+                        this.attachRemoteStream(remoteStream, () => {
+                            this.progress(4, `WebRTC Video Stream PLAYING (60 FPS)!`);
+                            if (this.hostConnection && this.hostConnection.open) {
+                                try { this.hostConnection.send({ type: 'STREAM_CONFIRMED' }); } catch (e) { }
+                            }
+                            resolve(this.playerSlot);
+                        });
+                    });
+
+                    call.on('error', (err) => {
+                        this.logEvent(`Media Call Error: ${err.message || err}`);
+                    });
+                } catch (e) {
+                    this.logEvent(`Call exception: ${e.message}`);
+                }
+
+                // 2. Parallel Data Connection to Host
                 this.hostConnection = this.peer.connect(this.roomId, {
-                    reliable: true,
-                    serialization: 'json'
+                    reliable: false
                 });
 
                 this.hostConnection.on('open', () => {
-                    this.progress(3, `DataChannel connected! Waiting for video stream from Host...`);
+                    this.progress(3, `DataChannel connected! Input streaming active.`);
                     this.startClientInputLoop();
                 });
 
                 this.hostConnection.on('data', (data) => {
                     if (data && data.type === 'WELCOME') {
                         this.playerSlot = data.slot;
-                        this.progress(3, `Assigned as Player ${this.playerSlot + 1}. Awaiting media stream...`);
+                        this.progress(3, `Assigned as Player ${this.playerSlot + 1}.`);
+                        const label = document.getElementById('netplayPlayerLabel');
+                        if (label) label.textContent = `Player ${this.playerSlot + 1}`;
                     } else if (data && data.type === 'PING') {
-                        this.hostConnection.send({ type: 'PONG', timestamp: data.timestamp });
+                        try { this.hostConnection.send({ type: 'PONG', timestamp: data.timestamp }); } catch (e) { }
                         this.rtt = Math.round(performance.now() - data.timestamp);
                         const pingEl = document.getElementById('netplayPing');
                         if (pingEl) pingEl.textContent = this.rtt;
@@ -386,31 +459,7 @@ class NetplayManager {
                 });
 
                 this.hostConnection.on('error', (err) => {
-                    this.progress(0, `DataChannel Error: ${err.message || err}`, true);
-                    reject(err);
-                });
-
-                // 2. Listen for incoming Host Call
-                this.peer.on('call', (incomingCall) => {
-                    this.progress(3, `Receiving MediaStream call from Host...`);
-                    this.hostCall = incomingCall;
-
-                    incomingCall.answer();
-
-                    incomingCall.on('stream', (remoteStream) => {
-                        this.remoteStream = remoteStream;
-                        this.attachRemoteStream(remoteStream, () => {
-                            this.progress(4, `WebRTC Video Stream PLAYING (60 FPS)!`);
-                            if (this.hostConnection && this.hostConnection.open) {
-                                this.hostConnection.send({ type: 'STREAM_CONFIRMED' });
-                            }
-                            resolve(this.playerSlot);
-                        });
-                    });
-
-                    incomingCall.on('error', (err) => {
-                        this.progress(0, `Media Call Error: ${err.message}`, true);
-                    });
+                    this.logEvent(`DataChannel Error: ${err.message || err}`);
                 });
             });
 
@@ -428,9 +477,6 @@ class NetplayManager {
         }
     }
 
-    /**
-     * Attaches received stream to video element with comprehensive event tracking
-     */
     attachRemoteStream(stream, onPlaySuccess) {
         const videoEl = document.getElementById('netplayVideo');
         if (!videoEl) return;
@@ -444,20 +490,30 @@ class NetplayManager {
         videoEl.setAttribute('webkit-playsinline', 'true');
         videoEl.setAttribute('autoplay', 'true');
 
+        let confirmed = false;
+        const confirmPlay = () => {
+            if (!confirmed) {
+                confirmed = true;
+                this.logEvent(`Video playback active! (${videoEl.videoWidth}x${videoEl.videoHeight})`);
+                const audioBanner = document.getElementById('netplayAudioBanner');
+                if (audioBanner && stream.getAudioTracks().length > 0) {
+                    audioBanner.style.display = 'block';
+                }
+                if (typeof onPlaySuccess === 'function') onPlaySuccess();
+            }
+        };
+
         videoEl.onloadedmetadata = () => {
-            const w = videoEl.videoWidth;
-            const h = videoEl.videoHeight;
-            this.logEvent(`Video metadata loaded: ${w}x${h}`);
+            this.logEvent(`Video metadata loaded: ${videoEl.videoWidth}x${videoEl.videoHeight}`);
             videoEl.play().catch(e => this.logEvent(`Play on loadedmetadata: ${e.message}`));
         };
 
+        videoEl.oncanplay = () => {
+            videoEl.play().catch(e => { });
+        };
+
         videoEl.onplaying = () => {
-            this.logEvent(`Video element is ACTIVE and playing frames! (${videoEl.videoWidth}x${videoEl.videoHeight})`);
-            const audioBanner = document.getElementById('netplayAudioBanner');
-            if (audioBanner && stream.getAudioTracks().length > 0) {
-                audioBanner.style.display = 'block';
-            }
-            if (typeof onPlaySuccess === 'function') onPlaySuccess();
+            confirmPlay();
         };
 
         videoEl.onerror = (e) => {
@@ -468,6 +524,7 @@ class NetplayManager {
         if (playPromise !== undefined) {
             playPromise.then(() => {
                 this.logEvent('Direct video.play() resolved.');
+                confirmPlay();
             }).catch((err) => {
                 this.logEvent(`Autoplay prompt required: ${err.message}`);
                 const audioBanner = document.getElementById('netplayAudioBanner');
