@@ -885,6 +885,12 @@ class MyClass {
             this.rivetsData.inputController.setupGamePad();
         }
 
+        // Initialize touch controller on mobile client view
+        if (window.touchController) {
+            window.touchController.init('netplayTouchContainer');
+            window.touchController.show();
+        }
+
         try {
             const slot = await window.netplayManager.startClient(code);
             const slotNum = slot + 1;
@@ -903,6 +909,7 @@ class MyClass {
 
     disconnectNetplay() {
         window.netplayManager.disconnect();
+        if (window.touchController) window.touchController.hide();
         $('#netplayClientView').hide();
         $('#maindiv').show();
         $('#middleDiv').show();
@@ -926,6 +933,52 @@ class MyClass {
                     this.connectNetplay(code);
                 }, 500);
             }
+        }
+    }
+
+    // --- Diagnostics & Debugging Console ---
+    showDebugConsole() {
+        if (!window.appLogger) return;
+        const telemetry = window.appLogger.getSystemTelemetry();
+
+        if (telemetry.netplay) {
+            $('#diagRole').text(telemetry.netplay.isHost ? '👑 Host' : (telemetry.netplay.isClient ? `🎮 Client (P${telemetry.netplay.playerSlot + 1})` : 'Idle'));
+            $('#diagPeerId').text(telemetry.netplay.roomId ? `${telemetry.netplay.roomId} (${telemetry.netplay.peerId || '--'})` : '--');
+            $('#diagIceState').text(telemetry.netplay.iceState || 'Connected');
+            $('#diagDataChannel').text(telemetry.netplay.dataChannelState || '--');
+            $('#diagVideoTrack').text(telemetry.netplay.videoTrackStatus || '--');
+        }
+        $('#diagScreen').text(telemetry.screen + (telemetry.touchSupport ? ' (Touch)' : ' (No Touch)'));
+
+        const logPre = document.getElementById('diagLogPre');
+        if (logPre) {
+            logPre.textContent = window.appLogger.getLogsText();
+            logPre.scrollTop = logPre.scrollHeight;
+        }
+        $('#diagLogCount').text(window.appLogger.logs.length);
+
+        $('#debugConsoleModal').modal('show');
+    }
+
+    copyDiagnostics() {
+        if (!window.appLogger) return;
+        const telem = JSON.stringify(window.appLogger.getSystemTelemetry(), null, 2);
+        const logs = window.appLogger.getLogsText();
+        const fullDump = `=== ROMHub System Diagnostics ===\n${telem}\n\n=== Console Logs ===\n${logs}`;
+
+        navigator.clipboard.writeText(fullDump).then(() => {
+            toastr.success('Diagnostics & logs copied to clipboard!');
+        }).catch(() => {
+            toastr.info('Please select and copy text manually.');
+        });
+    }
+
+    clearDiagnostics() {
+        if (window.appLogger) {
+            window.appLogger.clear();
+            const logPre = document.getElementById('diagLogPre');
+            if (logPre) logPre.textContent = '';
+            $('#diagLogCount').text('0');
         }
     }
 }

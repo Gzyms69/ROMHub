@@ -3,10 +3,13 @@
  * 
  * Features:
  * - Ultra-low latency canvas video (60 FPS) and Web Audio streaming via WebRTC MediaStream
+ * - Host-Initiated Calling architecture for reliable mobile & desktop media negotiation
+ * - Safe Mobile Video Autoplay (Muted start + Tap-to-Unmute prompt)
  * - Binary input streaming over RTCDataChannel (ordered: false, maxRetransmits: 0)
  * - Virtual Gamepad Injection Proxy into navigator.getGamepads for slots P2, P3, P4
  * - Full E2E encryption (DTLS-SRTP / SCTP)
- * - Friendly 6-character room codes and 1-click invite links
+ * - Multi-STUN server configuration for 5G/LTE NAT traversal
+ * - Deep diagnostic telemetry hooks for appLogger
  */
 
 class NetplayManager {
@@ -20,6 +23,7 @@ class NetplayManager {
         this.hostConnection = null;
         this.hostCall = null;
         this.mediaStream = null;
+        this.remoteStream = null;
         this.remotePlayers = {
             1: { buttons: new Array(16).fill(false), axes: [0, 0], lastUpdate: 0 },
             2: { buttons: new Array(16).fill(false), axes: [0, 0], lastUpdate: 0 },
@@ -28,9 +32,20 @@ class NetplayManager {
         this.inputLoopId = null;
         this.pingIntervalId = null;
         this.rtt = 0;
+        this.iceConnectionState = 'new';
         this.onStatusChange = null;
 
         this.setupGamepadProxy();
+    }
+
+    getIceServers() {
+        return [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun.cloudflare.com:3478' },
+            { urls: 'stun:global.stun.twilio.com:3478' }
+        ];
     }
 
     /**
@@ -78,9 +93,6 @@ class NetplayManager {
         return Object.values(this.connections).some(c => c.slot === slot && c.conn && c.conn.open);
     }
 
-    /**
-     * Generates a short, memorable 6-character room code (e.g. ROM-7821)
-     */
     generateRoomId() {
         const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
         let code = 'ROM-';
@@ -101,6 +113,7 @@ class NetplayManager {
         const canvas = document.getElementById('canvas');
         if (!canvas) throw new Error('Emulator canvas not found.');
 
+        console.log('[Netplay] Initializing Host canvas & audio capture...');
         // Capture WebGL canvas at 60 FPS
         const videoStream = canvas.captureStream(60);
 
@@ -110,21 +123,19 @@ class NetplayManager {
             const dest = window.myApp.audioContext.createMediaStreamDestination();
             window.myApp.gainNode.connect(dest);
             audioTrack = dest.stream.getAudioTracks()[0];
+            console.log('[Netplay] Audio track attached to host stream.');
+        } else {
+            console.warn('[Netplay] No active AudioContext found on host.');
         }
 
         const tracks = [...videoStream.getVideoTracks()];
         if (audioTrack) tracks.push(audioTrack);
         this.mediaStream = new MediaStream(tracks);
+        console.log(`[Netplay] Host MediaStream ready: ${tracks.length} tracks (Video: ${videoStream.getVideoTracks().length}, Audio: ${audioTrack ? 1 : 0}).`);
 
         return new Promise((resolve, reject) => {
-            // Use PeerJS with Google STUN
             this.peer = new Peer(this.roomId, {
-                config: {
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:global.stun.twilio.com:3478' }
-                    ]
-                }
+                config: { iceServers: this.getIceServers() }
             });
 
             this.peer.on('open', (id) => {
@@ -136,8 +147,7 @@ class NetplayManager {
             });
 
             this.peer.on('error', (err) => {
-                console.error('[Netplay] Peer error:', err);
-                // If room ID is taken, retry with random ID
+                console.error('[Netplay] Host Peer error:', err);
                 if (err.type === 'unavailable-id') {
                     this.peer.destroy();
                     this.startHost(this.generateRoomId()).then(resolve).catch(reject);
@@ -158,9 +168,23 @@ class NetplayManager {
             this.connections[conn.peer] = peerRecord;
 
             conn.on('open', () => {
-                // Send welcome packet with assigned slot
+                console.log(`[Netplay] DataChannel open with peer: ${conn.peer}`);
                 conn.send({ type: 'WELCOME', slot: assignedSlot, roomId: this.roomId });
                 this.updateUI();
+
+                // HOST-INITIATED CALLING: Host calls the client with the MediaStream!
+                if (this.mediaStream) {
+                    console.log(`[Netplay] Host initiating WebRTC Media Call to peer: ${conn.peer}...`);
+                    try {
+                        const call = this.peer.call(conn.peer, this.mediaStream);
+                        peerRecord.call = call;
+
+                        call.on('error', (err) => console.error('[Netplay] Host Call error:', err));
+                        call.on('close', () => console.log('[Netplay] Host Call closed with peer:', conn.peer));
+                    } catch (callErr) {
+                        console.error('[Netplay] Failed to initiate call to peer:', callErr);
+                    }
+                }
             });
 
             conn.on('data', (data) => {
@@ -180,13 +204,16 @@ class NetplayManager {
                 delete this.connections[conn.peer];
                 this.updateUI();
             });
+
+            conn.on('error', (err) => {
+                console.error(`[Netplay] Peer connection error with ${conn.peer}:`, err);
+            });
         });
 
-        // Incoming media calls (Answering with captured canvas & audio stream)
+        // Backup listener in case client initiates call
         this.peer.on('call', (call) => {
-            console.log(`[Netplay] Answering call from: ${call.peer}`);
+            console.log(`[Netplay] Incoming call from client: ${call.peer}, answering with MediaStream.`);
             call.answer(this.mediaStream);
-
             if (this.connections[call.peer]) {
                 this.connections[call.peer].call = call;
             }
@@ -205,7 +232,7 @@ class NetplayManager {
         const u8 = new Uint8Array(data);
         if (u8.length < 5) return;
 
-        const slot = u8[0]; // 1 = P2, 2 = P3, 3 = P4
+        const slot = u8[0] || defaultSlot;
         const buttonsHigh = u8[1];
         const buttonsLow = u8[2];
         const buttonsMask = (buttonsHigh << 8) | buttonsLow;
@@ -232,35 +259,32 @@ class NetplayManager {
         this.isClient = true;
         this.roomId = targetRoomId.toUpperCase().trim();
 
+        console.log(`[Netplay] Starting Client for room ${this.roomId}...`);
+
         return new Promise((resolve, reject) => {
             this.peer = new Peer({
-                config: {
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:global.stun.twilio.com:3478' }
-                    ]
-                }
+                config: { iceServers: this.getIceServers() }
             });
 
             this.peer.on('open', (myId) => {
-                console.log(`[Netplay] Client peer ready: ${myId}. Connecting to ${this.roomId}...`);
+                console.log(`[Netplay] Client peer ready with ID: ${myId}. Connecting to host: ${this.roomId}...`);
 
                 // 1. Establish Data Connection
                 this.hostConnection = this.peer.connect(this.roomId, {
                     reliable: false,
-                    serialization: 'binary'
+                    serialization: 'json'
                 });
 
                 this.hostConnection.on('open', () => {
-                    console.log(`[Netplay] Data channel established with host.`);
+                    console.log(`[Netplay] RTCDataChannel connected to host!`);
+                    this.startClientInputLoop();
                 });
 
                 this.hostConnection.on('data', (data) => {
                     if (data && data.type === 'WELCOME') {
                         this.playerSlot = data.slot;
-                        console.log(`[Netplay] Welcome received. Playing as Player ${this.playerSlot + 1}`);
+                        console.log(`[Netplay] Welcome received from host! Assigned as Player ${this.playerSlot + 1}`);
                         this.updateUI();
-                        this.startClientInputLoop();
                     } else if (data && data.type === 'PING') {
                         this.hostConnection.send({ type: 'PONG', timestamp: data.timestamp });
                         this.rtt = Math.round(performance.now() - data.timestamp);
@@ -269,25 +293,28 @@ class NetplayManager {
                 });
 
                 this.hostConnection.on('error', (err) => {
-                    console.error('[Netplay] Connection error:', err);
+                    console.error('[Netplay] Client DataChannel error:', err);
                     reject(err);
                 });
 
-                // 2. Establish Media Call (receive video/audio)
-                // We send an empty audio track so peerjs initiates call
-                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                const dummyStream = audioCtx.createMediaStreamDestination().stream;
+                // 2. Listen for incoming Host-Initiated Call
+                this.peer.on('call', (incomingCall) => {
+                    console.log('[Netplay] Received incoming MediaStream call from host!');
+                    this.hostCall = incomingCall;
 
-                this.hostCall = this.peer.call(this.roomId, dummyStream);
+                    // Answer call without sending client tracks
+                    incomingCall.answer();
 
-                this.hostCall.on('stream', (remoteStream) => {
-                    console.log('[Netplay] Remote MediaStream received!', remoteStream);
-                    this.attachRemoteStream(remoteStream);
-                    resolve(this.playerSlot);
-                });
+                    incomingCall.on('stream', (remoteStream) => {
+                        console.log('[Netplay] Remote MediaStream arrived!', remoteStream);
+                        this.remoteStream = remoteStream;
+                        this.attachRemoteStream(remoteStream);
+                        resolve(this.playerSlot);
+                    });
 
-                this.hostCall.on('error', (err) => {
-                    console.error('[Netplay] Call error:', err);
+                    incomingCall.on('error', (err) => {
+                        console.error('[Netplay] Client Call error:', err);
+                    });
                 });
             });
 
@@ -298,25 +325,60 @@ class NetplayManager {
         });
     }
 
+    /**
+     * Attaches received stream to video element with mobile Autoplay Policy compliance.
+     */
     attachRemoteStream(stream) {
-        let videoEl = document.getElementById('netplayVideo');
+        console.log('[Netplay] Attaching stream to video element...');
+        const videoEl = document.getElementById('netplayVideo');
         if (!videoEl) {
-            videoEl = document.createElement('video');
-            videoEl.id = 'netplayVideo';
-            videoEl.autoplay = true;
-            videoEl.playsInline = true;
-            videoEl.muted = false;
-            videoEl.style.width = '100%';
-            videoEl.style.maxWidth = '960px';
-            videoEl.style.borderRadius = '8px';
-            videoEl.style.boxShadow = '0 8px 30px rgba(0,0,0,0.8)';
-            videoEl.style.backgroundColor = '#000';
-
-            const container = document.getElementById('netplayClientView');
-            if (container) container.appendChild(videoEl);
+            console.error('[Netplay] #netplayVideo element not found in DOM!');
+            return;
         }
+
         videoEl.srcObject = stream;
-        videoEl.play().catch(e => console.warn('[Netplay] Autoplay prevented, clicking video will start audio:', e));
+        videoEl.muted = true; // Crucial for mobile autoplay approval!
+        videoEl.setAttribute('playsinline', '');
+        videoEl.setAttribute('webkit-playsinline', '');
+        videoEl.setAttribute('autoplay', '');
+
+        const playPromise = videoEl.play();
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                console.log('[Netplay] Video playing successfully (60 FPS Muted start).');
+                // Show Tap-to-Unmute banner if audio tracks exist
+                const hasAudio = stream.getAudioTracks().length > 0;
+                const audioBanner = document.getElementById('netplayAudioBanner');
+                if (audioBanner && hasAudio) {
+                    audioBanner.style.display = 'block';
+                }
+            }).catch((err) => {
+                console.warn('[Netplay] Autoplay prevented, user interaction required:', err);
+                const audioBanner = document.getElementById('netplayAudioBanner');
+                if (audioBanner) {
+                    audioBanner.innerHTML = '▶️ Tap here to start video & audio stream';
+                    audioBanner.style.display = 'block';
+                }
+            });
+        }
+
+        // Initialize mobile touch controls overlay if on mobile
+        if (window.touchController) {
+            window.touchController.init('netplayTouchContainer');
+            window.touchController.show();
+        }
+    }
+
+    unmuteAudio() {
+        const videoEl = document.getElementById('netplayVideo');
+        if (videoEl) {
+            videoEl.muted = false;
+            videoEl.play().then(() => {
+                console.log('[Netplay] Audio unmuted successfully.');
+                const audioBanner = document.getElementById('netplayAudioBanner');
+                if (audioBanner) audioBanner.style.display = 'none';
+            }).catch(err => console.error('[Netplay] Error unmuting audio:', err));
+        }
     }
 
     startClientInputLoop() {
@@ -330,16 +392,35 @@ class NetplayManager {
                 return;
             }
 
-            // Read Gamepad API
             let buttonsMask = 0;
             let stickX = 0;
             let stickY = 0;
 
+            // 1. Check TouchController first
+            if (window.touchController && window.touchController.enabled) {
+                const ts = window.touchController.state;
+                if (ts.A) buttonsMask |= (1 << 0);
+                if (ts.B) buttonsMask |= (1 << 1);
+                if (ts.Z) buttonsMask |= (1 << 2);
+                if (ts.Start) buttonsMask |= (1 << 3);
+                if (ts.DPAD_UP) buttonsMask |= (1 << 4);
+                if (ts.DPAD_DOWN) buttonsMask |= (1 << 5);
+                if (ts.DPAD_LEFT) buttonsMask |= (1 << 6);
+                if (ts.DPAD_RIGHT) buttonsMask |= (1 << 7);
+                if (ts.L) buttonsMask |= (1 << 8);
+                if (ts.R) buttonsMask |= (1 << 9);
+                if (ts.CUP) buttonsMask |= (1 << 10);
+                if (ts.CDOWN) buttonsMask |= (1 << 11);
+                if (ts.CLEFT) buttonsMask |= (1 << 12);
+                if (ts.CRIGHT) buttonsMask |= (1 << 13);
+                stickX = ts.stickX;
+                stickY = ts.stickY;
+            }
+
+            // 2. Read Gamepad API if available
             const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
             const gp = gamepads[0] || gamepads[1] || null;
-
             if (gp) {
-                // Map standard gamepad buttons
                 for (let i = 0; i < Math.min(16, gp.buttons.length); i++) {
                     if (gp.buttons[i] && gp.buttons[i].pressed) {
                         buttonsMask |= (1 << i);
@@ -350,7 +431,7 @@ class NetplayManager {
                     stickY = Math.max(-1, Math.min(1, gp.axes[1]));
                 }
             } else if (window.myApp && window.myApp.rivetsData && window.myApp.rivetsData.inputController) {
-                // Keyboard fallback from InputController
+                // 3. Read Keyboard Fallback
                 const ic = window.myApp.rivetsData.inputController;
                 if (ic.Key_Action_A) buttonsMask |= (1 << 0);
                 if (ic.Key_Action_B) buttonsMask |= (1 << 1);
@@ -366,18 +447,22 @@ class NetplayManager {
                 if (ic.Key_Action_CDOWN) buttonsMask |= (1 << 11);
                 if (ic.Key_Action_CLEFT) buttonsMask |= (1 << 12);
                 if (ic.Key_Action_CRIGHT) buttonsMask |= (1 << 13);
-                stickX = ic.VectorX || 0;
-                stickY = ic.VectorY || 0;
+                if (!stickX && !stickY) {
+                    stickX = ic.VectorX || 0;
+                    stickY = ic.VectorY || 0;
+                }
             }
 
-            // Encode packet
+            // Encode 5-byte binary packet
             packet[0] = this.playerSlot; // 1 = P2
             packet[1] = (buttonsMask >> 8) & 0xFF;
             packet[2] = buttonsMask & 0xFF;
             packet[3] = Math.round(stickX * 127 + 128) & 0xFF;
             packet[4] = Math.round(stickY * 127 + 128) & 0xFF;
 
-            this.hostConnection.send(packet);
+            try {
+                this.hostConnection.send(packet);
+            } catch (sendErr) { }
 
             this.inputLoopId = requestAnimationFrame(loop);
         };
@@ -392,7 +477,7 @@ class NetplayManager {
                 const now = performance.now();
                 Object.values(this.connections).forEach(c => {
                     if (c.conn && c.conn.open) {
-                        c.conn.send({ type: 'PING', timestamp: now });
+                        try { c.conn.send({ type: 'PING', timestamp: now }); } catch (e) { }
                     }
                 });
             }
@@ -416,6 +501,23 @@ class NetplayManager {
         }
     }
 
+    getDataChannelStatus() {
+        if (this.hostConnection) {
+            return this.hostConnection.open ? 'OPEN' : 'CONNECTING/CLOSED';
+        }
+        const openCount = Object.values(this.connections).filter(c => c.conn && c.conn.open).length;
+        return `${openCount} active connections`;
+    }
+
+    getVideoTrackStatus() {
+        const stream = this.remoteStream || this.mediaStream;
+        if (!stream) return 'No active stream';
+        const tracks = stream.getVideoTracks();
+        if (tracks.length === 0) return 'No video tracks';
+        const vt = tracks[0];
+        return `Track: ${vt.label || 'CanvasTrack'} (state: ${vt.readyState}, enabled: ${vt.enabled}, muted: ${vt.muted})`;
+    }
+
     disconnect() {
         if (this.inputLoopId) cancelAnimationFrame(this.inputLoopId);
         if (this.pingIntervalId) clearInterval(this.pingIntervalId);
@@ -429,6 +531,7 @@ class NetplayManager {
         this.isHost = false;
         this.isClient = false;
         this.connections = {};
+        if (window.touchController) window.touchController.hide();
         this.updateUI();
     }
 }

@@ -2,6 +2,7 @@
 <html>
 
 <head>
+    <script src="logger.js"></script>
     <title>ROMHub - Browser N64 Emulator</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="keywords" content="N64 Emulator, N64 JavaScript Emulator, WebAssembly, HTML5, Nintendo 64">
@@ -16,6 +17,7 @@
     <script src="js/FileSaver.min.js"></script>
     <script src="js/nipplejs.min.js"></script>
     <script src="js/peerjs.min.js"></script>
+    <script src="touch_controller.js"></script>
     <script src="netplay.js"></script>
     <script>
         function getSystemDarkMode(){
@@ -128,15 +130,184 @@
                 background-color: darkslategray;
             }
         }
-        .legal-notice {
-            background: #900;
-            color: white;
-            padding: 10px;
-            border-radius: 5px;
-            margin: 20px 0;
-            font-size: 0.9em;
+        /* Glassmorphic Touch Controller */
+        .n64-touch-hud {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 8px;
+            box-sizing: border-box;
         }
 
+        .hud-top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            pointer-events: auto;
+        }
+
+        .hud-bottom-zone {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            width: 100%;
+            height: 80%;
+            pointer-events: auto;
+        }
+
+        .touch-btn {
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            background: rgba(30, 30, 30, 0.45);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            color: #fff;
+            font-weight: bold;
+            border-radius: 50%;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+            transition: transform 0.05s ease, background 0.05s ease;
+        }
+
+        .touch-btn.active {
+            background: rgba(255, 255, 255, 0.85) !important;
+            color: #000 !important;
+            transform: scale(0.92);
+        }
+
+        .trigger-btn {
+            border-radius: 8px;
+            padding: 6px 16px;
+            font-size: 13px;
+            background: rgba(80, 80, 80, 0.55);
+        }
+
+        .start-btn {
+            border-radius: 20px;
+            padding: 4px 14px;
+            font-size: 11px;
+            background: rgba(220, 20, 60, 0.65);
+            border-color: rgba(255, 100, 100, 0.7);
+        }
+
+        .hud-left-zone {
+            position: relative;
+            width: 48%;
+            height: 100%;
+            touch-action: none;
+        }
+
+        .virtual-stick-base {
+            position: absolute;
+            width: 90px;
+            height: 90px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px dashed rgba(255, 255, 255, 0.4);
+            display: none;
+            pointer-events: none;
+        }
+
+        .virtual-stick-knob {
+            position: absolute;
+            top: 22px;
+            left: 22px;
+            width: 46px;
+            height: 46px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.7);
+            box-shadow: 0 0 12px rgba(255,255,255,0.8);
+            pointer-events: none;
+        }
+
+        .z-btn {
+            position: absolute;
+            bottom: 5px;
+            left: 5px;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: rgba(140, 140, 140, 0.55);
+            font-size: 15px;
+        }
+
+        .hud-right-zone {
+            position: relative;
+            width: 48%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            align-items: flex-end;
+        }
+
+        .c-button-cluster {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 6px;
+            margin-right: 6px;
+        }
+
+        .c-btn-middle {
+            display: flex;
+            align-items: center;
+        }
+
+        .c-label {
+            color: #ffeb3b;
+            font-weight: bold;
+            font-size: 13px;
+            margin: 0 3px;
+        }
+
+        .c-btn {
+            width: 32px;
+            height: 32px;
+            font-size: 11px;
+            background: rgba(255, 193, 7, 0.65);
+            border-color: rgba(255, 235, 59, 0.85);
+            color: #000;
+        }
+
+        .ab-button-cluster {
+            display: flex;
+            gap: 12px;
+            margin-right: 5px;
+            margin-bottom: 5px;
+        }
+
+        .a-btn {
+            width: 52px;
+            height: 52px;
+            font-size: 18px;
+            background: rgba(0, 123, 255, 0.7);
+            border-color: rgba(66, 165, 245, 0.9);
+        }
+
+        .b-btn {
+            width: 48px;
+            height: 48px;
+            font-size: 16px;
+            background: rgba(40, 167, 69, 0.7);
+            border-color: rgba(102, 187, 106, 0.9);
+            margin-top: 12px;
+        }
     </style>
 </head>
 
@@ -278,22 +449,30 @@
     </div>
 
     <!-- Netplay Client Remote View -->
-    <div id="netplayClientView" style="display: none; max-width: 960px; margin: 20px auto; padding: 10px;">
-        <div class="card mb-3 bg-dark border-primary text-white">
-            <div class="card-body py-2 d-flex justify-content-between align-items-center">
-                <div>
-                    <span class="badge badge-success mr-2">🟢 P2P Connected</span>
+    <div id="netplayClientView" style="display: none; max-width: 960px; margin: 10px auto; padding: 5px;">
+        <div class="card mb-2 bg-dark border-primary text-white">
+            <div class="card-body py-2 px-3 d-flex justify-content-between align-items-center flex-wrap">
+                <div class="my-1">
+                    <span class="badge badge-success mr-2">🟢 P2P Live</span>
                     <strong><span id="netplayPlayerLabel">Player 2</span></strong>
-                    <span class="text-muted ml-3">Ping: <strong id="netplayPing" class="text-info">--</strong> ms</span>
+                    <span class="text-muted ml-2">Ping: <strong id="netplayPing" class="text-info">--</strong> ms</span>
                 </div>
-                <div>
-                    <button class="btn btn-sm btn-outline-info mr-2" onclick="myApp.toggleNetplayFullscreen()">Fullscreen</button>
+                <div class="my-1">
+                    <button class="btn btn-sm btn-outline-info mr-1" onclick="myApp.toggleNetplayFullscreen()">Fullscreen</button>
                     <button class="btn btn-sm btn-danger" onclick="myApp.disconnectNetplay()">Disconnect</button>
                 </div>
             </div>
         </div>
-        <div id="netplayVideoContainer" style="background-color: #000; border-radius: 8px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
-            <!-- Video element dynamically attached by NetplayManager -->
+
+        <!-- Tap-to-Unmute Banner for Mobile -->
+        <div id="netplayAudioBanner" onclick="window.netplayManager.unmuteAudio()" style="display: none; background: linear-gradient(90deg, #ff8c00, #e52d27); color: white; padding: 10px; border-radius: 6px; margin-bottom: 8px; font-weight: bold; cursor: pointer; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+            🔊 Tap here to unmute game audio!
+        </div>
+
+        <div id="netplayVideoContainer" style="background-color: #000; border-radius: 8px; overflow: hidden; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.8); min-height: 240px;">
+            <video id="netplayVideo" autoplay playsinline webkit-playsinline muted style="width: 100%; display: block; background: #000;"></video>
+            <!-- In-game Glassmorphic Touch HUD container -->
+            <div id="netplayTouchContainer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: auto; z-index: 10;"></div>
         </div>
     </div>
 
@@ -990,6 +1169,7 @@
                     </div>
                 </div>
                 <div class="modal-footer" style="padding-top: 10px;" rv-hide="data.remapWait">
+                    <button type="button" class="btn btn-outline-info mr-auto" onclick="myApp.showDebugConsole()">🐞 Diagnostics & Logs</button>
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
                     <button type="button" onclick="myApp.restoreDefaultKeymappings()" class="btn btn-primary">Restore Defaults</button>
                     <button type="button" class="btn btn-primary" onclick="myApp.saveRemap()">Save changes</button>
@@ -1052,6 +1232,53 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Diagnostic Logs Button -->
+    <button id="floatingDebugBtn" type="button" class="btn btn-sm btn-dark" onclick="myApp.showDebugConsole()" style="position: fixed; bottom: 15px; right: 15px; z-index: 9999; opacity: 0.85; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); font-size: 13px; padding: 6px 12px; border: 1px solid #17a2b8;">
+        🐞 Logs & Diagnostics
+    </button>
+
+    <!-- Debug Console & Diagnostics Modal -->
+    <div class="modal fade" id="debugConsoleModal" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+            <div class="modal-content bg-dark text-white border-info">
+                <div class="modal-header py-2">
+                    <h5 class="modal-title">🐞 Diagnostics & Live Console Logs</h5>
+                    <button type="button" class="close text-white" data-dismiss="modal">&times;</button>
+                </div>
+                <div class="modal-body p-3">
+                    <!-- Real-time WebRTC & System Telemetry -->
+                    <div class="card bg-secondary text-white mb-3 p-2 font-weight-normal" style="font-size: 13px;">
+                        <div class="row">
+                            <div class="col-sm-6">
+                                <div><strong>Netplay Role:</strong> <span id="diagRole">Idle</span></div>
+                                <div><strong>Room / Peer ID:</strong> <span id="diagPeerId">--</span></div>
+                                <div><strong>ICE Connection:</strong> <span id="diagIceState">--</span></div>
+                            </div>
+                            <div class="col-sm-6">
+                                <div><strong>DataChannel:</strong> <span id="diagDataChannel">--</span></div>
+                                <div><strong>Video Stream:</strong> <span id="diagVideoTrack">--</span></div>
+                                <div><strong>Device:</strong> <span id="diagScreen">--</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Log Output -->
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="font-weight-bold">Console Output (<span id="diagLogCount">0</span> entries):</span>
+                        <div>
+                            <button class="btn btn-sm btn-outline-light mr-1" onclick="myApp.copyDiagnostics()">📋 Copy Logs</button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="myApp.clearDiagnostics()">Clear</button>
+                        </div>
+                    </div>
+                    <pre id="diagLogPre" style="background: #111; color: #39ff14; font-family: monospace; font-size: 11px; padding: 10px; border-radius: 4px; height: 260px; overflow-y: scroll; white-space: pre-wrap; word-break: break-all; margin-bottom: 0;"></pre>
+                </div>
+                <div class="modal-footer py-1">
+                    <button type="button" class="btn btn-sm btn-secondary" data-dismiss="modal">Close</button>
                 </div>
             </div>
         </div>
