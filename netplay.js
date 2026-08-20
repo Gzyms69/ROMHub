@@ -2,11 +2,11 @@
  * ROMHub Netplay - WebRTC Peer-to-Peer E2E Multiplayer & Remote Co-Op
  * 
  * Features:
- * - Parallel Dual-Track WebRTC Negotiation: Media call and DataChannel negotiate simultaneously
- * - 2D GPU Blit Streamer: Solves WebGL buffer clear by copying rendered frames in real-time
- * - H.264 WebRTC hardware video codec prioritization for universal mobile (iOS / Android) playback
- * - OpenRelay TURN servers for 100% reliable 5G/LTE Carrier-Grade NAT traversal
- * - Interactive Multiplayer Lobby with Slot Deduplication and Host 'START GAME' trigger
+ * - PeerJS Level 3 Debugging (debug: 3) for 100% transparent WebRTC diagnostics
+ * - High-speed STUN pool with iceCandidatePoolSize: 10
+ * - Deep RTCPeerConnection & MediaStream telemetry inspector
+ * - Parallel Dual-Track WebRTC Negotiation (instant media call response)
+ * - 2D GPU Blit Streamer for consistent 60 FPS video without WebGL buffer clearing
  * - Full video lifecycle events (onloadedmetadata, oncanplay, onplaying, onerror)
  * - Virtual Gamepad Injection Proxy into navigator.getGamepads for slots P2, P3, P4
  */
@@ -47,11 +47,14 @@ class NetplayManager {
 
         this.inputLoopId = null;
         this.pingIntervalId = null;
+        this.telemetryIntervalId = null;
         this.rtt = 0;
         this.onLobbyUpdate = null;
         this.onClientProgress = null;
+        this.onTelemetryUpdate = null;
 
         this.setupGamepadProxy();
+        this.startTelemetryLoop();
     }
 
     getIceServers() {
@@ -59,19 +62,10 @@ class NetplayManager {
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
             { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' },
             { urls: 'stun:stun.cloudflare.com:3478' },
-            { urls: 'stun:global.stun.twilio.com:3478' },
-            { urls: 'stun:openrelay.metered.ca:80' },
-            // OpenRelay Public TURN Server (Handles strict 5G / Symmetric NATs)
-            {
-                urls: [
-                    'turn:openrelay.metered.ca:80',
-                    'turn:openrelay.metered.ca:443',
-                    'turn:openrelay.metered.ca:443?transport=tcp'
-                ],
-                username: 'openrelayproject',
-                credential: 'openrelayproject'
-            }
+            { urls: 'stun:global.stun.twilio.com:3478' }
         ];
     }
 
@@ -79,7 +73,7 @@ class NetplayManager {
         const time = new Date().toLocaleTimeString();
         const entry = `[${time}] ${msg}`;
         this.eventLogs.push(entry);
-        if (this.eventLogs.length > 60) this.eventLogs.shift();
+        if (this.eventLogs.length > 80) this.eventLogs.shift();
         console.log(`[Netplay] ${msg}`);
         this.notifyLobby();
     }
@@ -138,7 +132,7 @@ class NetplayManager {
     }
 
     /**
-     * Initializes Host mode with 2D GPU Blit Streamer and parallel listeners
+     * Initializes Host mode with 2D GPU Blit Streamer and PeerJS debug: 3
      */
     async startHost(customRoomId = null) {
         this.isHost = true;
@@ -183,7 +177,7 @@ class NetplayManager {
         };
         this.blitAnimFrameId = requestAnimationFrame(blitLoop);
 
-        // Capture stream from the 2D streamCanvas (guarantees non-empty frames!)
+        // Capture stream from 2D streamCanvas
         const videoStream = this.streamCanvas.captureStream(60);
 
         let audioTrack = null;
@@ -201,6 +195,7 @@ class NetplayManager {
 
         return new Promise((resolve, reject) => {
             this.peer = new Peer(this.roomId, {
+                debug: 3,
                 config: {
                     iceServers: this.getIceServers(),
                     iceCandidatePoolSize: 10
@@ -228,7 +223,7 @@ class NetplayManager {
     }
 
     setupHostListeners() {
-        // 1. Listen for Incoming Media Calls from Clients
+        // 1. Incoming Media Call
         this.peer.on('call', (incomingCall) => {
             this.logEvent(`Incoming Media Call from: ${incomingCall.peer}! Answering with 60 FPS stream...`);
             incomingCall.answer(this.mediaStream);
@@ -244,13 +239,13 @@ class NetplayManager {
             });
         });
 
-        // 2. Listen for Incoming Data Connections from Clients
+        // 2. Incoming Data Connection
         this.peer.on('connection', (conn) => {
             const record = this.getOrCreatePeerRecord(conn.peer);
             record.conn = conn;
             const assignedSlot = record.slot;
 
-            this.logEvent(`Incoming data channel from: ${conn.peer} -> Slot P${assignedSlot + 1}`);
+            this.logEvent(`Incoming data connection from: ${conn.peer} -> Slot P${assignedSlot + 1}`);
             this.updateSlotState(assignedSlot, 'CONNECTING', conn.peer);
 
             const markOpen = () => {
@@ -301,7 +296,6 @@ class NetplayManager {
             return this.connections[peerId];
         }
 
-        // Clean up any stale records
         const assignedSlot = this.getNextAvailableSlot();
         const record = {
             conn: null,
@@ -383,17 +377,18 @@ class NetplayManager {
     }
 
     /**
-     * Initializes Client mode with parallel Dual-Track WebRTC call & data channel
+     * Initializes Client mode with PeerJS debug: 3 and deep progress tracking
      */
     async startClient(targetRoomId) {
         this.isHost = false;
         this.isClient = true;
         this.roomId = targetRoomId.toUpperCase().trim();
 
-        this.progress(1, 'Connecting to P2P Signaling Broker...');
+        this.progress(1, 'Connecting to P2P Signaling Broker (0.peerjs.com)...');
 
         return new Promise((resolve, reject) => {
             this.peer = new Peer({
+                debug: 3,
                 config: {
                     iceServers: this.getIceServers(),
                     iceCandidatePoolSize: 10
@@ -401,7 +396,7 @@ class NetplayManager {
             });
 
             this.peer.on('open', (myId) => {
-                this.progress(2, `Broker OK (${myId.substring(0, 8)}...). Calling Host ${this.roomId}...`);
+                this.progress(2, `Broker Connected (${myId.substring(0, 8)}...). Initiating call to Host: ${this.roomId}...`);
 
                 // 1. Parallel Media Call to Host
                 try {
@@ -438,7 +433,7 @@ class NetplayManager {
                 });
 
                 this.hostConnection.on('open', () => {
-                    this.progress(3, `DataChannel connected! Input streaming active.`);
+                    this.progress(3, `DataChannel connected! Controller stream active.`);
                     this.startClientInputLoop();
                 });
 
@@ -654,6 +649,58 @@ class NetplayManager {
                 });
             }
         }, 1000);
+    }
+
+    startTelemetryLoop() {
+        if (this.telemetryIntervalId) clearInterval(this.telemetryIntervalId);
+        this.telemetryIntervalId = setInterval(() => {
+            if (typeof this.onTelemetryUpdate === 'function') {
+                try {
+                    this.onTelemetryUpdate(this.getTelemetry());
+                } catch (e) { }
+            }
+        }, 500);
+    }
+
+    getTelemetry() {
+        let pc = null;
+        let dataConn = null;
+        let mediaConn = null;
+
+        if (this.isClient) {
+            dataConn = this.hostConnection;
+            mediaConn = this.hostCall;
+            pc = (dataConn && dataConn.peerConnection) || (mediaConn && mediaConn.peerConnection) || null;
+        } else if (this.isHost) {
+            const firstKey = Object.keys(this.connections)[0];
+            if (firstKey) {
+                dataConn = this.connections[firstKey].conn;
+                mediaConn = this.connections[firstKey].call;
+                pc = (dataConn && dataConn.peerConnection) || (mediaConn && mediaConn.peerConnection) || null;
+            }
+        }
+
+        const videoEl = document.getElementById('netplayVideo');
+
+        return {
+            role: this.isHost ? 'Host' : (this.isClient ? 'Client' : 'Idle'),
+            roomId: this.roomId || 'None',
+            peerId: this.peer ? this.peer.id : 'Disconnected',
+            brokerConnected: !!(this.peer && !this.peer.disconnected),
+            iceConnectionState: pc ? pc.iceConnectionState : 'N/A',
+            iceGatheringState: pc ? pc.iceGatheringState : 'N/A',
+            signalingState: pc ? pc.signalingState : 'N/A',
+            dataChannelStatus: dataConn ? (dataConn.open ? 'OPEN' : 'CONNECTING') : 'NONE',
+            mediaCallStatus: mediaConn ? (mediaConn.open ? 'ACTIVE' : 'NEGOTIATING') : 'NONE',
+            rtt: this.rtt,
+            videoElement: videoEl ? {
+                readyState: videoEl.readyState,
+                videoWidth: videoEl.videoWidth,
+                videoHeight: videoEl.videoHeight,
+                paused: videoEl.paused,
+                muted: videoEl.muted
+            } : null
+        };
     }
 
     disconnect() {

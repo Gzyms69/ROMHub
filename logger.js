@@ -8,7 +8,7 @@
 class DiagnosticLogger {
     constructor() {
         this.logs = [];
-        this.maxLogs = 500;
+        this.maxLogs = 600;
         this.listeners = [];
         this.enabled = true;
 
@@ -76,22 +76,51 @@ class DiagnosticLogger {
     getSystemTelemetry() {
         const netplay = window.netplayManager;
         return {
+            timestamp: new Date().toISOString(),
             userAgent: navigator.userAgent,
             screen: `${window.innerWidth}x${window.innerHeight} (dpr: ${window.devicePixelRatio})`,
             touchSupport: ('ontouchstart' in window) || navigator.maxTouchPoints > 0,
             webRTCSupported: !!(window.RTCPeerConnection && window.RTCDataChannel),
-            netplay: netplay ? {
-                isHost: netplay.isHost,
-                isClient: netplay.isClient,
-                roomId: netplay.roomId,
-                peerId: netplay.peer ? netplay.peer.id : null,
-                playerSlot: netplay.playerSlot,
-                rtt: netplay.rtt,
-                iceState: netplay.iceConnectionState,
-                dataChannelState: netplay.getDataChannelStatus(),
-                videoTrackStatus: netplay.getVideoTrackStatus()
-            } : null
+            netplay: netplay && typeof netplay.getTelemetry === 'function' ? netplay.getTelemetry() : null
         };
+    }
+
+    generateFullReport() {
+        const telemetry = this.getSystemTelemetry();
+        let report = `=== ROMHub Full Diagnostic Report ===\n`;
+        report += `Generated At: ${telemetry.timestamp}\n`;
+        report += `User Agent: ${telemetry.userAgent}\n`;
+        report += `Viewport: ${telemetry.screen}\n`;
+        report += `Touch Screen: ${telemetry.touchSupport}\n`;
+        report += `WebRTC Support: ${telemetry.webRTCSupported}\n\n`;
+
+        if (telemetry.netplay) {
+            report += `--- WebRTC Netplay Telemetry ---\n`;
+            for (const [key, val] of Object.entries(telemetry.netplay)) {
+                report += `${key}: ${typeof val === 'object' ? JSON.stringify(val) : val}\n`;
+            }
+            report += `\n`;
+        }
+
+        report += `--- Recent Console Logs (Last ${this.logs.length}) ---\n`;
+        report += this.getLogsText();
+        report += `\n=== End of Report ===\n`;
+        return report;
+    }
+
+    copyFullReport() {
+        const report = this.generateFullReport();
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(report);
+        } else {
+            const ta = document.createElement('textarea');
+            ta.value = report;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            return Promise.resolve();
+        }
     }
 }
 

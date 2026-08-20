@@ -490,13 +490,31 @@
             <div id="netplayTouchContainer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: auto; z-index: 10;"></div>
         </div>
 
+        <!-- Live WebRTC Telemetry HUD -->
+        <div class="card bg-dark border-info text-white mt-2 mb-2 p-2 text-left" style="font-size: 11px;">
+            <div class="d-flex justify-content-between align-items-center mb-1 border-bottom border-secondary pb-1">
+                <strong class="text-info">🔬 WebRTC Live Telemetry</strong>
+                <button class="btn btn-sm btn-info py-0 px-2 font-weight-bold" style="font-size: 11px;" onclick="myApp.copyDiagnosticReport()">📋 Copy Full Report</button>
+            </div>
+            <div class="row no-gutters">
+                <div class="col-6 pr-1">
+                    <div>Broker: <strong id="telemBroker" class="text-warning">Connecting...</strong></div>
+                    <div>ICE State: <strong id="telemIce" class="text-warning">N/A</strong></div>
+                </div>
+                <div class="col-6 pl-1">
+                    <div>DataChannel: <strong id="telemData" class="text-warning">NONE</strong></div>
+                    <div>Video Track: <strong id="telemVideo" class="text-warning">N/A</strong></div>
+                </div>
+            </div>
+        </div>
+
         <!-- On-Screen Live Debug Terminal Box for Guest (Mobile / PC) -->
-        <div class="mt-2 text-left">
+        <div class="text-left">
             <div class="d-flex justify-content-between align-items-center px-1 mb-1">
                 <small class="text-muted font-weight-bold">Live Connection Terminal:</small>
                 <button class="btn btn-sm btn-link text-info p-0" style="font-size: 11px;" onclick="$('#clientLiveTerminal').toggle()">Show / Hide</button>
             </div>
-            <pre id="clientLiveTerminal" style="background: #111; color: #00ff66; font-family: monospace; font-size: 11px; padding: 8px; border-radius: 4px; height: 90px; overflow-y: auto; margin-bottom: 0; border: 1px solid #333;">[Initializing WebRTC Netplay engine...]</pre>
+            <pre id="clientLiveTerminal" style="background: #111; color: #00ff66; font-family: monospace; font-size: 11px; padding: 8px; border-radius: 4px; height: 120px; overflow-y: auto; margin-bottom: 0; border: 1px solid #333;">[Initializing WebRTC Netplay engine...]</pre>
         </div>
     </div>
 

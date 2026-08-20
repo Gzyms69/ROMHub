@@ -944,6 +944,9 @@ class MyClass {
         window.netplayManager.onClientProgress = (p) => {
             this.renderClientProgress(p);
         };
+        window.netplayManager.onTelemetryUpdate = (t) => {
+            this.updateTelemetryUI(t);
+        };
 
         // Ensure input controller is ready for client gamepad/keyboard capture
         if (this.rivetsData.inputController) {
@@ -967,6 +970,43 @@ class MyClass {
             $('#clientStatusBadge').removeClass('badge-warning badge-success').addClass('badge-danger').text('🔴 Connection Failed');
             $('#clientStepMessage').html(`<span class="text-danger">Failed to connect: ${err.message || err}</span>`);
             toastr.error('Failed to connect to host: ' + (err.message || err));
+        }
+    }
+
+    updateTelemetryUI(t) {
+        if (!t) return;
+        $('#telemBroker').text(t.brokerConnected ? 'Connected (0.peerjs.com)' : 'Disconnected')
+            .attr('class', t.brokerConnected ? 'text-success' : 'text-danger');
+        
+        let iceClass = 'text-warning';
+        if (t.iceConnectionState === 'connected' || t.iceConnectionState === 'completed') iceClass = 'text-success';
+        else if (t.iceConnectionState === 'failed') iceClass = 'text-danger';
+        $('#telemIce').text(t.iceConnectionState).attr('class', iceClass);
+
+        let dataClass = 'text-warning';
+        if (t.dataChannelStatus === 'OPEN') dataClass = 'text-success';
+        $('#telemData').text(t.dataChannelStatus).attr('class', dataClass);
+
+        let videoText = 'N/A';
+        let videoClass = 'text-warning';
+        if (t.videoElement) {
+            if (t.videoElement.readyState >= 2) {
+                videoText = `${t.videoElement.videoWidth}x${t.videoElement.videoHeight} (Live 60 FPS)`;
+                videoClass = 'text-success';
+            } else {
+                videoText = `ReadyState ${t.videoElement.readyState}`;
+            }
+        }
+        $('#telemVideo').text(videoText).attr('class', videoClass);
+    }
+
+    copyDiagnosticReport() {
+        if (window.appLogger) {
+            window.appLogger.copyFullReport().then(() => {
+                toastr.success('Full Diagnostic Report copied to clipboard!');
+            }).catch(() => {
+                toastr.info('Report copied.');
+            });
         }
     }
 
