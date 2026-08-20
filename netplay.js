@@ -2,11 +2,11 @@
  * ROMHub Netplay - WebRTC Peer-to-Peer E2E Multiplayer & Remote Co-Op
  * 
  * Features:
- * - PeerJS Level 3 Debugging (debug: 3) for 100% transparent WebRTC diagnostics
+ * - Full Dual-Track (Audio + Video) WebRTC Offer: Ensures WebRTC SDP m=video section is generated
+ * - 2D GPU Blit Streamer: Solves WebGL buffer clearing by copying rendered frames in real-time
+ * - PeerJS Level 3 Debugging (debug: 3) for complete telemetry
  * - High-speed STUN pool with iceCandidatePoolSize: 10
  * - Deep RTCPeerConnection & MediaStream telemetry inspector
- * - Parallel Dual-Track WebRTC Negotiation (instant media call response)
- * - 2D GPU Blit Streamer for consistent 60 FPS video without WebGL buffer clearing
  * - Full video lifecycle events (onloadedmetadata, oncanplay, onplaying, onerror)
  * - Virtual Gamepad Injection Proxy into navigator.getGamepads for slots P2, P3, P4
  */
@@ -377,7 +377,7 @@ class NetplayManager {
     }
 
     /**
-     * Initializes Client mode with PeerJS debug: 3 and deep progress tracking
+     * Initializes Client mode with dual-track (Video + Audio) WebRTC offer
      */
     async startClient(targetRoomId) {
         this.isHost = false;
@@ -398,18 +398,30 @@ class NetplayManager {
             this.peer.on('open', (myId) => {
                 this.progress(2, `Broker Connected (${myId.substring(0, 8)}...). Initiating call to Host: ${this.roomId}...`);
 
-                // 1. Parallel Media Call to Host
+                // 1. Parallel Media Call to Host with BOTH Video and Audio tracks
                 try {
+                    // Create dummy 2x2 canvas to generate a real VideoTrack for SDP m=video section
+                    const dummyCanvas = document.createElement('canvas');
+                    dummyCanvas.width = 2;
+                    dummyCanvas.height = 2;
+                    const dummyVideoStream = dummyCanvas.captureStream(1);
+                    const dummyVideoTrack = dummyVideoStream.getVideoTracks()[0];
+
+                    // Create dummy audio track
                     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                     const dummyDest = audioCtx.createMediaStreamDestination();
-                    const dummyStream = dummyDest.stream;
+                    const dummyAudioTrack = dummyDest.stream.getAudioTracks()[0];
 
-                    this.logEvent(`Calling host ${this.roomId} for MediaStream...`);
-                    const call = this.peer.call(this.roomId, dummyStream);
+                    const clientOfferStream = new MediaStream([dummyVideoTrack, dummyAudioTrack]);
+
+                    this.logEvent(`Calling host ${this.roomId} with dual-track offer (video+audio)...`);
+                    const call = this.peer.call(this.roomId, clientOfferStream);
                     this.hostCall = call;
 
                     call.on('stream', (remoteStream) => {
-                        this.progress(3, `Received remote MediaStream (${remoteStream.getVideoTracks().length} tracks)!`);
+                        const vTracks = remoteStream.getVideoTracks().length;
+                        const aTracks = remoteStream.getAudioTracks().length;
+                        this.progress(3, `Received remote MediaStream (${vTracks} video, ${aTracks} audio)!`);
                         this.remoteStream = remoteStream;
                         this.attachRemoteStream(remoteStream, () => {
                             this.progress(4, `WebRTC Video Stream PLAYING (60 FPS)!`);
@@ -476,7 +488,9 @@ class NetplayManager {
         const videoEl = document.getElementById('netplayVideo');
         if (!videoEl) return;
 
-        this.logEvent(`Attaching MediaStream (${stream.getVideoTracks().length} video, ${stream.getAudioTracks().length} audio)...`);
+        const vCount = stream.getVideoTracks().length;
+        const aCount = stream.getAudioTracks().length;
+        this.logEvent(`Attaching MediaStream (${vCount} video, ${aCount} audio)...`);
 
         videoEl.srcObject = stream;
         videoEl.muted = true;
@@ -670,13 +684,13 @@ class NetplayManager {
         if (this.isClient) {
             dataConn = this.hostConnection;
             mediaConn = this.hostCall;
-            pc = (dataConn && dataConn.peerConnection) || (mediaConn && mediaConn.peerConnection) || null;
+            pc = (mediaConn && mediaConn.peerConnection) || (dataConn && dataConn.peerConnection) || null;
         } else if (this.isHost) {
             const firstKey = Object.keys(this.connections)[0];
             if (firstKey) {
                 dataConn = this.connections[firstKey].conn;
                 mediaConn = this.connections[firstKey].call;
-                pc = (dataConn && dataConn.peerConnection) || (mediaConn && mediaConn.peerConnection) || null;
+                pc = (mediaConn && mediaConn.peerConnection) || (dataConn && dataConn.peerConnection) || null;
             }
         }
 
