@@ -449,11 +449,12 @@
     </div>
 
     <!-- Netplay Client Remote View -->
-    <div id="netplayClientView" style="display: none; max-width: 960px; margin: 10px auto; padding: 5px;">
+    <div id="netplayClientView" style="display: none; max-width: 960px; margin: 5px auto; padding: 5px;">
+        <!-- Top Status Bar -->
         <div class="card mb-2 bg-dark border-primary text-white">
             <div class="card-body py-2 px-3 d-flex justify-content-between align-items-center flex-wrap">
                 <div class="my-1">
-                    <span class="badge badge-success mr-2">🟢 P2P Live</span>
+                    <span id="clientStatusBadge" class="badge badge-warning mr-2">🟡 Connecting...</span>
                     <strong><span id="netplayPlayerLabel">Player 2</span></strong>
                     <span class="text-muted ml-2">Ping: <strong id="netplayPing" class="text-info">--</strong> ms</span>
                 </div>
@@ -464,15 +465,36 @@
             </div>
         </div>
 
+        <!-- Connection Progress Banner / Stepper -->
+        <div id="clientProgressCard" class="card bg-secondary text-white mb-2 p-2 text-left" style="font-size: 13px;">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <strong>Connection Progress:</strong>
+                <span id="clientStepIndicator" class="badge badge-info">Step 1 / 4</span>
+            </div>
+            <div id="clientStepMessage" class="text-warning font-weight-bold">
+                Connecting to WebRTC Signaling Broker...
+            </div>
+        </div>
+
         <!-- Tap-to-Unmute Banner for Mobile -->
         <div id="netplayAudioBanner" onclick="window.netplayManager.unmuteAudio()" style="display: none; background: linear-gradient(90deg, #ff8c00, #e52d27); color: white; padding: 10px; border-radius: 6px; margin-bottom: 8px; font-weight: bold; cursor: pointer; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
             🔊 Tap here to unmute game audio!
         </div>
 
+        <!-- Video & Touch Container -->
         <div id="netplayVideoContainer" style="background-color: #000; border-radius: 8px; overflow: hidden; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.8); min-height: 240px;">
             <video id="netplayVideo" autoplay playsinline webkit-playsinline muted style="width: 100%; display: block; background: #000;"></video>
             <!-- In-game Glassmorphic Touch HUD container -->
             <div id="netplayTouchContainer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: auto; z-index: 10;"></div>
+        </div>
+
+        <!-- On-Screen Live Debug Terminal Box for Guest (Mobile / PC) -->
+        <div class="mt-2 text-left">
+            <div class="d-flex justify-content-between align-items-center px-1 mb-1">
+                <small class="text-muted font-weight-bold">Live Connection Terminal:</small>
+                <button class="btn btn-sm btn-link text-info p-0" style="font-size: 11px;" onclick="$('#clientLiveTerminal').toggle()">Show / Hide</button>
+            </div>
+            <pre id="clientLiveTerminal" style="background: #111; color: #00ff66; font-family: monospace; font-size: 11px; padding: 8px; border-radius: 4px; height: 90px; overflow-y: auto; margin-bottom: 0; border: 1px solid #333;">[Initializing WebRTC Netplay engine...]</pre>
         </div>
     </div>
 
@@ -1178,38 +1200,40 @@
         </div>
     </div>
 
-    <!-- Netplay Host Modal -->
+    <!-- Netplay Host Interactive Lobby Modal -->
     <div class="modal fade" id="netplayHostModal" tabindex="-1" role="dialog">
-        <div class="modal-dialog modal-dialog-centered" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">🎮 Host Online Co-Op / Multiplayer</h5>
+        <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+            <div class="modal-content bg-dark text-white border-primary">
+                <div class="modal-header py-2 border-secondary">
+                    <h5 class="modal-title font-weight-bold">🎮 Multiplayer Co-Op Lobby</h5>
                     <button type="button" class="close text-white" data-dismiss="modal">&times;</button>
                 </div>
-                <div class="modal-body text-center">
-                    <p class="text-muted">Invite a friend to play with you! They can join from any browser without needing to upload the ROM.</p>
-                    <div class="form-group">
-                        <label>Your Room Code:</label>
-                        <div class="input-group">
-                            <input type="text" id="netplayRoomCodeInput" class="form-control text-center font-weight-bold" style="font-size: 1.3rem; letter-spacing: 2px;" readonly>
-                            <div class="input-group-append">
-                                <button class="btn btn-primary" type="button" onclick="myApp.copyNetplayLink()">Copy Invite Link</button>
-                            </div>
+                <div class="modal-body p-3 text-center">
+                    <!-- Room Code Banner -->
+                    <div class="card bg-secondary text-white mb-3 text-center p-3 border-0">
+                        <span class="text-uppercase text-warning font-weight-bold" style="letter-spacing: 1px; font-size: 13px;">Room Invite Code</span>
+                        <div class="d-flex justify-content-center align-items-center mt-2 flex-wrap">
+                            <input type="text" id="netplayRoomCodeInput" class="form-control text-center font-weight-bold mr-2 text-warning bg-dark border-warning" style="font-size: 1.5rem; letter-spacing: 3px; max-width: 200px;" readonly>
+                            <button class="btn btn-primary font-weight-bold my-1" type="button" onclick="myApp.copyNetplayLink()">📋 Copy Invite Link</button>
                         </div>
+                        <small class="text-light mt-2">Send this link or code to a friend on mobile or PC. They do not need to upload the ROM!</small>
                     </div>
-                    <div id="netplayHostStatus" class="mb-3">
-                        <span class="badge badge-success p-2">🟢 P2P Host Ready (Waiting for players)</span>
+
+                    <!-- Slots Grid -->
+                    <h6 class="font-weight-bold text-info text-left mb-2">Players in Lobby:</h6>
+                    <div id="lobbySlotsContainer" class="row mb-3 text-left">
+                        <!-- Rendered dynamically by script.js -->
                     </div>
-                    <h6 class="text-left font-weight-bold">Connected Players:</h6>
-                    <ul id="netplayPlayerList" class="list-group list-group-flush text-left">
-                        <li class="list-group-item bg-transparent d-flex justify-content-between align-items-center text-white">
-                            <span>👑 Player 1 (You / Host)</span>
-                            <span class="badge badge-primary">Active</span>
-                        </li>
-                    </ul>
+
+                    <!-- Live Event Stream Log inside Lobby -->
+                    <h6 class="font-weight-bold text-muted text-left mb-1" style="font-size: 13px;">Live Activity Stream:</h6>
+                    <div id="lobbyEventLog" style="background: #111; color: #00ff66; font-family: monospace; font-size: 11px; padding: 8px; border-radius: 4px; height: 110px; overflow-y: auto; text-align: left; border: 1px solid #333;">[Lobby initialized. Waiting for connections...]</div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                <div class="modal-footer border-secondary d-flex justify-content-between">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close Lobby</button>
+                    <button type="button" id="btnLobbyStartGame" class="btn btn-success btn-lg px-4 font-weight-bold" onclick="myApp.startLobbyGame()">
+                        ▶ START / RESUME GAME
+                    </button>
                 </div>
             </div>
         </div>

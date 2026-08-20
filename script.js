@@ -831,24 +831,79 @@ class MyClass {
         try {
             const roomId = await window.netplayManager.startHost();
             $('#netplayRoomCodeInput').val(roomId);
-            $('#netplayHostStatus').html('<span class="badge badge-success p-2">🟢 P2P Host Ready: ' + roomId + '</span>');
-            
-            window.netplayManager.onStatusChange = (status) => {
-                const list = $('#netplayPlayerList');
-                list.empty();
-                list.append('<li class="list-group-item bg-transparent d-flex justify-content-between align-items-center text-white"><span>👑 Player 1 (Host / You)</span><span class="badge badge-primary">Active</span></li>');
-                
-                if (status.connections && status.connections.length > 0) {
-                    status.connections.forEach(c => {
-                        const slotNum = c.slot + 1;
-                        list.append(`<li class="list-group-item bg-transparent d-flex justify-content-between align-items-center text-white"><span>🎮 Player ${slotNum} (Remote)</span><span class="badge badge-success">${c.ping} ms</span></li>`);
-                    });
-                }
+
+            window.netplayManager.onLobbyUpdate = (lobbyState) => {
+                this.renderHostLobby(lobbyState);
             };
+            this.renderHostLobby({
+                roomId: roomId,
+                slots: window.netplayManager.slots,
+                eventLogs: window.netplayManager.eventLogs,
+                isReadyToPlay: window.netplayManager.slots.some(s => s.slot > 0 && s.status === 'READY')
+            });
         } catch (err) {
             console.error('Failed to start host:', err);
             toastr.error('Failed to initialize WebRTC Host: ' + (err.message || err));
         }
+    }
+
+    renderHostLobby(lobby) {
+        const container = $('#lobbySlotsContainer');
+        container.empty();
+
+        (lobby.slots || []).forEach(s => {
+            let badgeHtml = '';
+            let borderClass = 'border-secondary';
+            if (s.status === 'READY') {
+                badgeHtml = `<span class="badge badge-success px-2 py-1">🟢 READY (${s.ping || 0} ms)</span>`;
+                borderClass = 'border-success';
+            } else if (s.status === 'CONNECTING') {
+                badgeHtml = `<span class="badge badge-warning px-2 py-1">🟡 CONNECTING (5G TURN)...</span>`;
+                borderClass = 'border-warning';
+            } else if (s.status === 'WAITING') {
+                badgeHtml = `<span class="badge badge-secondary px-2 py-1">⏳ WAITING FOR PLAYER...</span>`;
+            } else {
+                badgeHtml = `<span class="badge badge-dark text-muted px-2 py-1">OPEN SLOT</span>`;
+            }
+
+            const col = `
+            <div class="col-sm-6 mb-2">
+                <div class="card bg-dark ${borderClass} text-white p-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>${s.slot === 0 ? '👑' : '🎮'} ${s.label}</strong>
+                        </div>
+                        <div>${badgeHtml}</div>
+                    </div>
+                </div>
+            </div>`;
+            container.append(col);
+        });
+
+        // Event Log
+        const logBox = document.getElementById('lobbyEventLog');
+        if (logBox && lobby.eventLogs) {
+            logBox.textContent = lobby.eventLogs.join('\n');
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        // Start Game Button
+        const startBtn = document.getElementById('btnLobbyStartGame');
+        if (startBtn) {
+            if (lobby.isReadyToPlay) {
+                startBtn.className = 'btn btn-success btn-lg px-4 font-weight-bold';
+                startBtn.innerHTML = '▶ START / RESUME GAME (Ready!)';
+            } else {
+                startBtn.className = 'btn btn-primary btn-lg px-4 font-weight-bold';
+                startBtn.innerHTML = '▶ START / RESUME GAME';
+            }
+        }
+    }
+
+    startLobbyGame() {
+        window.netplayManager.startGame();
+        $('#netplayHostModal').modal('hide');
+        toastr.success('Multiplayer session live!');
     }
 
     showNetplayJoinModal() {
@@ -873,12 +928,22 @@ class MyClass {
             return;
         }
         $('#netplayJoinModal').modal('hide');
-        toastr.info('Connecting to room ' + code + '...');
 
         // Hide main setup UI
         $('#maindiv').hide();
         $('#middleDiv').hide();
         $('#netplayClientView').show();
+
+        // Reset progress UI
+        $('#clientStatusBadge').removeClass('badge-success badge-danger').addClass('badge-warning').text('🟡 Connecting...');
+        $('#clientStepIndicator').text('Step 1 / 4');
+        $('#clientStepMessage').text('Connecting to WebRTC Signaling Broker...');
+        const term = document.getElementById('clientLiveTerminal');
+        if (term) term.textContent = `[Starting connection to Host room ${code}...]\n`;
+
+        window.netplayManager.onClientProgress = (p) => {
+            this.renderClientProgress(p);
+        };
 
         // Ensure input controller is ready for client gamepad/keyboard capture
         if (this.rivetsData.inputController) {
@@ -895,15 +960,32 @@ class MyClass {
             const slot = await window.netplayManager.startClient(code);
             const slotNum = slot + 1;
             $('#netplayPlayerLabel').text(`Player ${slotNum}`);
+            $('#clientStatusBadge').removeClass('badge-warning badge-danger').addClass('badge-success').text('🟢 P2P Live (60 FPS)');
             toastr.success(`Connected as Player ${slotNum}!`);
-
-            window.netplayManager.onStatusChange = (status) => {
-                $('#netplayPing').text(status.rtt || '--');
-            };
         } catch (err) {
             console.error('Client connection failed:', err);
+            $('#clientStatusBadge').removeClass('badge-warning badge-success').addClass('badge-danger').text('🔴 Connection Failed');
+            $('#clientStepMessage').html(`<span class="text-danger">Failed to connect: ${err.message || err}</span>`);
             toastr.error('Failed to connect to host: ' + (err.message || err));
-            this.disconnectNetplay();
+        }
+    }
+
+    renderClientProgress(p) {
+        if (p.isError) {
+            $('#clientStatusBadge').removeClass('badge-warning badge-success').addClass('badge-danger').text('🔴 Connection Failed');
+            $('#clientStepMessage').html(`<span class="text-danger font-weight-bold">${p.message}</span>`);
+        } else {
+            $('#clientStepIndicator').text(`Step ${p.step} / 4`);
+            $('#clientStepMessage').text(p.message);
+            if (p.step === 4) {
+                $('#clientStatusBadge').removeClass('badge-warning badge-danger').addClass('badge-success').text('🟢 P2P Live (60 FPS)');
+            }
+        }
+
+        const term = document.getElementById('clientLiveTerminal');
+        if (term) {
+            term.textContent += `${p.message}\n`;
+            term.scrollTop = term.scrollHeight;
         }
     }
 
