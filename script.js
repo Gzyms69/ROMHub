@@ -281,6 +281,9 @@ bindIfExists('mobileMenuModal');
 
         const drive = () => {
             if (!this.rivetsData.beforeEmulatorStarted && typeof Module !== 'undefined' && typeof Module._runMainLoop === 'function') {
+                if (window.netplayManager) {
+                    window.netplayManager.injectControllerMemory();
+                }
                 // If audioContext is suspended or missing, drive frames via requestAnimationFrame
                 if (!this.audioContext || this.audioContext.state !== 'running') {
                     try {
@@ -389,6 +392,9 @@ bindIfExists('mobileMenuModal');
         }
         else
         {
+            if (window.netplayManager) {
+                window.netplayManager.injectControllerMemory();
+            }
             Module._runMainLoop();
             this.audioWritePosition = Module._neilGetAudioWritePosition();
             if (!this.hasEnoughSamples())

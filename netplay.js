@@ -241,6 +241,49 @@ class NetplayManager {
         };
     }
 
+    injectControllerMemory() {
+        if (typeof Module === 'undefined' || !Module.HEAP32) return;
+        const baseAddress = 165652540;
+        const i32 = new Int32Array(Module.HEAP32.buffer);
+        const f32 = new Float32Array(Module.HEAPF32.buffer);
+
+        for (let slot = 0; slot < 4; slot++) {
+            const baseWord = (baseAddress / 4) + (slot * 20);
+            let state = null;
+
+            if (this.isHost) {
+                state = (slot === 0) ? this.captureLocalInputState(0) : this.remotePlayers[slot];
+            } else if (this.isClient && this.netplayMode === 'ROM_SYNC') {
+                state = (slot === this.playerSlot) ? this.captureLocalInputState(this.playerSlot) : this.remotePlayers[slot];
+            } else {
+                if (slot === 0) state = this.captureLocalInputState(0);
+            }
+
+            if (state) {
+                const btns = state.buttons || [];
+                const axes = state.axes || [0, 0, 0, 0];
+
+                i32[baseWord + 0] = 1; // Connected
+                i32[baseWord + 1] = btns[12] ? 1 : 0; // UP
+                i32[baseWord + 2] = btns[13] ? 1 : 0; // DOWN
+                i32[baseWord + 3] = btns[14] ? 1 : 0; // LEFT
+                i32[baseWord + 4] = btns[15] ? 1 : 0; // RIGHT
+                i32[baseWord + 5] = btns[9] ? 1 : 0;  // START
+                i32[baseWord + 7] = btns[5] ? 1 : 0;  // R
+                i32[baseWord + 8] = btns[6] ? 1 : 0;  // L
+                i32[baseWord + 9] = btns[4] ? 1 : 0;  // Z
+                i32[baseWord + 10] = btns[0] ? 1 : 0; // A
+                i32[baseWord + 11] = btns[2] ? 1 : 0; // B
+                f32[baseWord + 12] = typeof axes[0] === 'number' ? axes[0] : 0; // Stick X
+                f32[baseWord + 13] = typeof axes[1] === 'number' ? axes[1] : 0; // Stick Y
+                i32[baseWord + 16] = (btns[14] && axes[2] < -0.5) ? 1 : 0; // CLEFT
+                i32[baseWord + 17] = (btns[15] && axes[2] > 0.5) ? 1 : 0;  // CRIGHT
+                i32[baseWord + 18] = (btns[12] && axes[3] < -0.5) ? 1 : 0; // CUP
+                i32[baseWord + 19] = (btns[13] && axes[3] > 0.5) ? 1 : 0;  // CDOWN
+            }
+        }
+    }
+
     hasConnectedPlayer(slot) {
         return Object.values(this.connections).some(c => c.slot === slot && (c.status === 'READY' || c.status === 'CONNECTED' || c.status === 'IN_GAME'));
     }
