@@ -50,6 +50,9 @@ class DiagnosticLogger {
         const time = new Date().toISOString().substring(11, 19);
         const formatted = args.map(arg => {
             if (typeof arg === 'string') return arg;
+            if (arg instanceof Error || (arg && (arg.message || arg.stack))) {
+                return `${arg.name || 'Error'}: ${arg.message || ''}\n${arg.stack || ''}`;
+            }
             if (arg instanceof Uint8Array || arg instanceof ArrayBuffer) {
                 const len = arg.byteLength !== undefined ? arg.byteLength : arg.length;
                 return `[Binary ArrayBuffer: ${len} bytes]`;

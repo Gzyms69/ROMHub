@@ -260,9 +260,18 @@ bindIfExists('mobileMenuModal');
     }
 
     async writeAssets(){
-        let file = 'assets.zip';
-        let responseText = await this.downloadFile(file);
-        FS.writeFile(file, responseText);
+        try {
+            if (typeof FS !== 'undefined' && FS.analyzePath && FS.analyzePath('assets.zip').exists) {
+                return;
+            }
+            let file = 'assets.zip';
+            let responseText = await this.downloadFile(file);
+            if (typeof FS !== 'undefined') {
+                FS.writeFile(file, responseText);
+            }
+        } catch (e) {
+            console.warn('writeAssets skipped or failed:', e);
+        }
     }
 
     async downloadFile(url) {
@@ -271,15 +280,16 @@ bindIfExists('mobileMenuModal');
             oReq.open("GET", url, true);
             oReq.responseType = "arraybuffer";
             oReq.onload = function (oEvent) {
-                var arrayBuffer = oReq.response;
-                var byteArray = new Uint8Array(arrayBuffer);
-                resolve(byteArray);
+                if (oReq.status === 200 || oReq.status === 0) {
+                    var arrayBuffer = oReq.response;
+                    var byteArray = new Uint8Array(arrayBuffer);
+                    resolve(byteArray);
+                } else {
+                    reject(new Error(`Failed to download ${url}: HTTP ${oReq.status}`));
+                }
             };
             oReq.onerror = function(){
-                reject({
-                    status: oReq.status,
-                    statusText: oReq.statusText
-                });
+                reject(new Error(`Network error downloading ${url}`));
             }
             oReq.send();
         });
@@ -612,46 +622,72 @@ bindIfExists('mobileMenuModal');
     }
 
     findInDatabase() {
-        if (window["indexedDB"]==undefined) return;
-        var request = indexedDB.open('N64WASMDB');
-        request.onsuccess = function (ev) {
-            var db = ev.target.result;
-            var romStore = db.transaction("N64WASMSTATES", "readwrite").objectStore("N64WASMSTATES");
-            romStore.openCursor().onsuccess = function (ev) {
-                var cursor = ev.target.result;
-                if (cursor) {
-                    if (myClass.rom_name == cursor.key.toString()) myClass.rivetsData.noLocalSave = false;
-                    cursor.continue();
-                }
-            }
-        }
+        if (typeof window === 'undefined' || !window.indexedDB) return;
+        try {
+            var request = indexedDB.open('N64WASMDB');
+            request.onsuccess = function (ev) {
+                try {
+                    var db = ev.target.result;
+                    if (!db.objectStoreNames.contains("N64WASMSTATES")) return;
+                    var romStore = db.transaction("N64WASMSTATES", "readonly").objectStore("N64WASMSTATES");
+                    romStore.openCursor().onsuccess = function (ev) {
+                        var cursor = ev.target.result;
+                        if (cursor) {
+                            if (myClass.rom_name == cursor.key.toString()) myClass.rivetsData.noLocalSave = false;
+                            cursor.continue();
+                        }
+                    };
+                } catch (e) {}
+            };
+        } catch (e) {}
     }
 
     async LoadSram() {
-        return new Promise(function (resolve, reject) {
-            var request = indexedDB.open('N64WASMDB');
-            request.onsuccess = function (ev) {
-                var db = ev.target.result;
-                var romStore = db.transaction("N64WASMSTATES", "readwrite").objectStore("N64WASMSTATES");
-                var rom = romStore.get(myClass.rom_name + '.sram');
-                rom.onsuccess = function (event) {
-                    if (rom.result) FS.writeFile('/game.savememory', rom.result);
-                    resolve();
+        return new Promise(function (resolve) {
+            if (typeof window === 'undefined' || !window.indexedDB) { resolve(); return; }
+            try {
+                var request = indexedDB.open('N64WASMDB');
+                request.onsuccess = function (ev) {
+                    try {
+                        var db = ev.target.result;
+                        if (!db.objectStoreNames.contains("N64WASMSTATES")) {
+                            resolve();
+                            return;
+                        }
+                        var romStore = db.transaction("N64WASMSTATES", "readonly").objectStore("N64WASMSTATES");
+                        var rom = romStore.get(myClass.rom_name + '.sram');
+                        rom.onsuccess = function (event) {
+                            if (rom.result && typeof FS !== 'undefined') {
+                                try { FS.writeFile('/game.savememory', rom.result); } catch (err) {}
+                            }
+                            resolve();
+                        };
+                        rom.onerror = function () { resolve(); };
+                    } catch (err) {
+                        resolve();
+                    }
                 };
-                rom.onerror = function (event) { reject(); }
+                request.onerror = function () { resolve(); };
+            } catch (err) {
+                resolve();
             }
-            request.onerror = function (ev) { reject(); }
         });
     }
 
     SaveSram() {
-        let data = FS.readFile('/game.savememory');
-        var request = indexedDB.open('N64WASMDB');
-        request.onsuccess = function (ev) {
-            var db = ev.target.result;
-            var romStore = db.transaction("N64WASMSTATES", "readwrite").objectStore("N64WASMSTATES");
-            romStore.put(data, myClass.rom_name + '.sram');
-        }
+        if (typeof window === 'undefined' || !window.indexedDB || typeof FS === 'undefined') return;
+        try {
+            let data = FS.readFile('/game.savememory');
+            var request = indexedDB.open('N64WASMDB');
+            request.onsuccess = function (ev) {
+                try {
+                    var db = ev.target.result;
+                    if (!db.objectStoreNames.contains("N64WASMSTATES")) return;
+                    var romStore = db.transaction("N64WASMSTATES", "readwrite").objectStore("N64WASMSTATES");
+                    romStore.put(data, myClass.rom_name + '.sram');
+                } catch (e) {}
+            };
+        } catch (e) {}
     }
 
     saveToDatabase(data) {
@@ -717,20 +753,20 @@ bindIfExists('mobileMenuModal');
 
     setupMobileMode() {
         this.canvasSize = window.innerWidth;
-        $("#btnHideMenu").show();
-        let halfWidth = (window.innerWidth / 2) - 35;
-        document.getElementById("menuDiv").style.left = halfWidth + "px";
-        this.rivetsData.inputController.setupMobileControls('divTouchSurface');
-        $("#mobileDiv").show();
-        $("#maindiv").hide();
-        $("#middleDiv").hide();
-        $('#canvas').appendTo("#mobileCanvas");
-        document.getElementById('maindiv').classList.remove('container');
-        document.getElementById('canvas').style.display = 'block';
-        try { document.body.scrollTop = 0; document.documentElement.scrollTop = 0; } catch (error) { } //
+        if (window.touchController) {
+            window.touchController.init('touchOverlayContainer');
+            window.touchController.show();
+        }
+        $('#maindiv').show();
+        $('#gameStage').show();
+        const canvas = document.getElementById('canvas');
+        if (canvas) canvas.style.display = 'block';
+        try { document.body.scrollTop = 0; document.documentElement.scrollTop = 0; } catch (error) { }
     }
 
-    hideMobileMenu() { if (this.mobileMode) { $("#mobileButtons").hide(); $('#menuDiv').show(); } }
+    hideMobileMenu() {
+        $('#mobileMenuModal').modal('hide');
+    }
 
     setFromLocalStorage(localStorageName, rivetsName){
         let val = localStorage.getItem(localStorageName);
@@ -896,6 +932,8 @@ bindIfExists('mobileMenuModal');
             } else {
                 clearInterval(interval);
                 $('#syncCountdownOverlay').hide();
+                $('#netplayClientView').hide();
+                $('#maindiv').show();
                 $('#gameStage').show();
                 $('#inGameNetplayBadge').show();
                 $('#inGamePingBadge').show();
