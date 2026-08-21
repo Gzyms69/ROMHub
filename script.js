@@ -255,8 +255,42 @@ bindIfExists('mobileMenuModal');
             this.sendMobileControls = Module.cwrap('neil_send_mobile_controls', null, ['string','string','string']);
             this.setRemainingAudio = Module.cwrap('neil_set_buffer_remaining', null, ['number']);
             this.setDoubleSpeed = Module.cwrap('neil_set_double_speed', null, ['number']);
+
+            this.setupAudioUnlocks();
+            this.startFrameDriver();
         }
 
+    }
+
+    setupAudioUnlocks() {
+        if (this.audioUnlocksInstalled) return;
+        this.audioUnlocksInstalled = true;
+        const unlock = () => {
+            if (this.audioContext && this.audioContext.state === 'suspended') {
+                this.audioContext.resume().catch(e => {});
+            }
+        };
+        ['touchstart', 'touchend', 'click', 'keydown', 'mousedown'].forEach(evt => {
+            window.addEventListener(evt, unlock, { passive: true });
+        });
+    }
+
+    startFrameDriver() {
+        if (this.frameDriverRunning) return;
+        this.frameDriverRunning = true;
+
+        const drive = () => {
+            if (!this.rivetsData.beforeEmulatorStarted && typeof Module !== 'undefined' && typeof Module._runMainLoop === 'function') {
+                // If audioContext is suspended or missing, drive frames via requestAnimationFrame
+                if (!this.audioContext || this.audioContext.state !== 'running') {
+                    try {
+                        Module._runMainLoop();
+                    } catch (e) {}
+                }
+            }
+            requestAnimationFrame(drive);
+        };
+        requestAnimationFrame(drive);
     }
 
     async writeAssets(){
