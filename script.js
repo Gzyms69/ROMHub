@@ -112,12 +112,11 @@ class MyClass {
             return eval(eval_string);
         }
 
-        rivets.bind(document.getElementById('topPanel'), { data: this.rivetsData });
-        rivets.bind(document.getElementById('bottomPanel'), { data: this.rivetsData });
-        rivets.bind(document.getElementById('buttonsModal'), { data: this.rivetsData });
-        rivets.bind(document.getElementById('lblError'), { data: this.rivetsData });
-        rivets.bind(document.getElementById('mobileBottomPanel'), { data: this.rivetsData });
-        rivets.bind(document.getElementById('mobileButtons'), { data: this.rivetsData });
+        const bindIfExists = (id) => { const el = document.getElementById(id); if (el) rivets.bind(el, { data: this.rivetsData }); };
+bindIfExists('topPanel');
+bindIfExists('buttonsModal');
+bindIfExists('lblError');
+bindIfExists('mobileMenuModal');
         
         this.setupDragDropRom();
         this.detectMobile();
