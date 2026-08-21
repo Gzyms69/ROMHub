@@ -13,6 +13,7 @@
     <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/css/toastr.min.css">
+    <link rel="stylesheet" href="css/style.css?v=2">
     <script src="js/FileSaver.min.js"></script>
     <script src="js/nipplejs.min.js"></script>
     <script src="js/peerjs.min.js"></script>
@@ -442,167 +443,109 @@
 
     </div>
 
-    <div id="middleDiv" class="text-center">
-        <!-- ID has to be canvas it's hardcoded in the EM generated .js -->
-        <div id="canvasDiv" style="display: none;">
-            <canvas id="canvas" style="width: 640px;"></canvas>
-        </div>
-
-        <div id="bottomPanel" rv-hide="data.beforeEmulatorStarted">
-        </div>
-
-    </div>
-
-    <!-- Netplay Client Remote View -->
-    <div id="netplayClientView" style="display: none; max-width: 960px; margin: 5px auto; padding: 5px;">
-        <!-- Top Status Bar -->
-        <div class="card mb-2 bg-dark border-primary text-white">
-            <div class="card-body py-2 px-3 d-flex justify-content-between align-items-center flex-wrap">
-                <div class="my-1">
-                    <span id="clientStatusBadge" class="badge badge-warning mr-2">🟡 Connecting...</span>
-                    <strong><span id="netplayPlayerLabel">Player 2</span></strong>
-                    <span class="text-muted ml-2">Ping: <strong id="netplayPing" class="text-info">--</strong> ms</span>
-                </div>
-                <div class="my-1">
-                    <button class="btn btn-sm btn-outline-info mr-1" onclick="myApp.toggleNetplayFullscreen()">Fullscreen</button>
-                    <button class="btn btn-sm btn-danger" onclick="myApp.disconnectNetplay()">Disconnect</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Connection Progress Banner / Stepper -->
-        <div id="clientProgressCard" class="card bg-secondary text-white mb-2 p-2 text-left" style="font-size: 13px;">
-            <div class="d-flex justify-content-between align-items-center mb-1">
-                <strong>Connection Progress:</strong>
-                <span id="clientStepIndicator" class="badge badge-info">Step 1 / 4</span>
-            </div>
-            <div id="clientStepMessage" class="text-warning font-weight-bold">
-                Connecting to WebRTC Signaling Broker...
-            </div>
-        </div>
-
-        <!-- ROM Transfer Progress for Guest -->
-        <div id="netplayRomTransferContainer" style="display: none;" class="card bg-dark border-success text-white mb-2 p-3 text-left">
-            <div class="d-flex justify-content-between align-items-center mb-1">
-                <strong><span id="romTransferTitle">⚡ P2P ROM Transfer</span></strong>
-                <span id="romTransferPercent" class="badge badge-success">0%</span>
-            </div>
-            <div class="progress" style="height: 16px; background-color: #222;">
-                <div id="romTransferProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 0%;">0%</div>
-            </div>
-            <small id="romTransferStatus" class="text-muted mt-1">Receiving high-speed ROM chunks from Host...</small>
-        </div>
-
-        <!-- Tap-to-Unmute Banner for Mobile -->
-        <div id="netplayAudioBanner" onclick="window.netplayManager.unmuteAudio()" style="display: none; background: linear-gradient(90deg, #ff8c00, #e52d27); color: white; padding: 10px; border-radius: 6px; margin-bottom: 8px; font-weight: bold; cursor: pointer; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
-            🔊 Tap here to unmute game audio!
-        </div>
-
-        <!-- Video & Touch Container -->
-        <div id="netplayVideoContainer" style="background-color: #000; border-radius: 8px; overflow: hidden; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.8); min-height: 240px;">
-            <video id="netplayVideo" autoplay playsinline webkit-playsinline muted style="width: 100%; display: block; background: #000;"></video>
-            <!-- In-game Glassmorphic Touch HUD container -->
-            <div id="netplayTouchContainer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: auto; z-index: 10;"></div>
-        </div>
-
-        <!-- Live WebRTC Telemetry HUD -->
-        <div class="card bg-dark border-info text-white mt-2 mb-2 p-2 text-left" style="font-size: 11px;">
-            <div class="d-flex justify-content-between align-items-center mb-1 border-bottom border-secondary pb-1">
-                <strong class="text-info">🔬 WebRTC Live Telemetry</strong>
-                <button class="btn btn-sm btn-info py-0 px-2 font-weight-bold" style="font-size: 11px;" onclick="myApp.copyDiagnosticReport()">📋 Copy Full Report</button>
-            </div>
-            <div class="row no-gutters">
-                <div class="col-6 pr-1">
-                    <div>Broker: <strong id="telemBroker" class="text-warning">Connecting...</strong></div>
-                    <div>ICE State: <strong id="telemIce" class="text-warning">N/A</strong></div>
-                </div>
-                <div class="col-6 pl-1">
-                    <div>DataChannel: <strong id="telemData" class="text-warning">NONE</strong></div>
-                    <div>Video Track: <strong id="telemVideo" class="text-warning">N/A</strong></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- On-Screen Live Debug Terminal Box for Guest (Mobile / PC) -->
-        <div class="text-left">
-            <div class="d-flex justify-content-between align-items-center px-1 mb-1">
-                <small class="text-muted font-weight-bold">Live Connection Terminal:</small>
-                <button class="btn btn-sm btn-link text-info p-0" style="font-size: 11px;" onclick="$('#clientLiveTerminal').toggle()">Show / Hide</button>
-            </div>
-            <pre id="clientLiveTerminal" style="background: #111; color: #00ff66; font-family: monospace; font-size: 11px; padding: 8px; border-radius: 4px; height: 120px; overflow-y: auto; margin-bottom: 0; border: 1px solid #333;">[Initializing WebRTC Netplay engine...]</pre>
+    <!-- Synchronized 3-2-1 Countdown Overlay -->
+    <div id="syncCountdownOverlay" style="display: none;">
+        <div class="text-center">
+            <div id="syncCountdownText" class="countdown-number">3</div>
+            <div id="syncCountdownSubtext" class="text-info font-weight-bold mt-2" style="font-size: 20px; letter-spacing: 2px;">SYNCHRONIZING EMULATOR ENGINES...</div>
         </div>
     </div>
 
-    <!-- Mobile UX -->
-    <div id="mobileButtons" style="display: none;text-align: center;padding-top: 20px;padding-bottom: 20px;">
-        <div style="margin-bottom: 10px;">
-            <button class="btn btn-primary mt-2 mb-2" onclick="myApp.newRom()" >New Rom</button>
-            <button class="btn btn-primary mt-2 mb-2" onclick="myApp.saveStateLocal()" >Save State</button>
-            <button class="btn btn-primary mt-2 mb-2" onclick="myApp.loadStateLocal()" rv-disabled="data.noLocalSave" >Load State</button>
+    <!-- Responsive Fullscreen-Ready Game Stage -->
+    <div id="gameStage" style="display: none;">
+        <!-- In-Game Minimal Floating Top Pill -->
+        <div id="inGamePill" class="in-game-pill">
+            <span id="inGameFpsBadge" class="badge badge-success px-2 py-1">60 FPS</span>
+            <span id="inGameNetplayBadge" style="display: none;" class="badge badge-info px-2 py-1">⚡ Netplay</span>
+            <span id="inGamePingBadge" style="display: none;" class="badge badge-dark text-info px-2 py-1">-- ms</span>
+            <button type="button" class="pill-btn" onclick="myApp.toggleFullscreen()" title="Toggle Fullscreen">⛶ Fullscreen</button>
+            <button type="button" class="pill-btn" onclick="myApp.showMobileMenu()" title="Settings & Save States">⚙ Menu</button>
+            <button type="button" class="pill-btn" onclick="myApp.showDebugConsole()" title="Diagnostics & Logs">🐞</button>
         </div>
-        <span rv-if="data.showDoubleSpeed">
-            <button class="btn btn-success mt-2 mb-2" rv-if="data.doubleSpeed | ev '==true'"
-                onclick="myApp.toggleDoubleSpeed()">2x Speed</button>
-            <button class="btn btn-primary mt-2 mb-2" rv-if="data.doubleSpeed | ev '==false'"
-                onclick="myApp.toggleDoubleSpeed()">2x Speed</button>
-        </span>
-        <button type="button" class="btn btn-primary" onclick="myApp.hideMobileMenu()">
-            Hide
-        </button>
+
+        <!-- Auto-fitting 4:3 WebGL Canvas -->
+        <canvas id="canvas"></canvas>
+
+        <!-- PPSSPP Glassmorphic On-Screen Gamepad Overlay -->
+        <div id="touchOverlayContainer"></div>
     </div>
-    <div id="mobileDiv" style="display: none;height: 100%;">
-        <div id="mobileCanvas">
-    
-        </div>
-    
-        <div id="mobileBottomPanel" style="font-size: 36px;height:100%;text-align: center!important;background: white;">
-            <table style="width: 100%;" cellpadding=0 cellspacing=0>
-                <tr>
-                    <td style="border-right: 1px solid rgb(72,72,72);width:50%;">
-                        <div id="mobileStart" class="start-z-button" rv-class-buttonhold="data.inputController.MobileStart">
-                            Start
-                        </div>
-                    </td>
-                    <td>
-                    <div id="mobileSelect" class="start-z-button" rv-class-buttonhold="data.inputController.MobileSelect">
-                        <span rv-if="data.useZasCMobile | ev '==false'">Z</span>
-                        <span rv-if="data.useZasCMobile | ev '==true'">C (Hold)</span>
+
+    <!-- Netplay Client Dedicated Lobby View (Shown only while staging/waiting) -->
+    <div id="netplayClientView" style="display: none; max-width: 720px; margin: 15px auto; padding: 10px;">
+        <div class="card bg-dark border-primary text-white mb-3 shadow-lg">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center py-2">
+                <h5 class="mb-0">🎮 Multiplayer Lobby</h5>
+                <span id="clientStatusBadge" class="badge badge-warning">🟡 Connecting...</span>
+            </div>
+            <div class="card-body p-3">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <strong>You are: <span id="netplayPlayerLabel" class="text-warning">Player 2</span></strong>
+                        <span class="text-muted ml-3">Ping: <strong id="netplayPing" class="text-info">--</strong> ms</span>
                     </div>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="border-right: 1px solid rgb(72,72,72);">
-                        <div id="mobileB" class="b-a-button" rv-class-buttonhold="data.inputController.MobileB">
-                            B
+                    <button class="btn btn-sm btn-outline-danger" onclick="myApp.disconnectNetplay()">Leave Lobby</button>
+                </div>
+
+                <!-- Connection Progress Stepper -->
+                <div id="clientProgressCard" class="card bg-secondary text-white mb-3 p-2 text-left" style="font-size: 13px;">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <strong>Status:</strong>
+                        <span id="clientStepIndicator" class="badge badge-info">Step 1 / 4</span>
+                    </div>
+                    <div id="clientStepMessage" class="text-warning font-weight-bold">
+                        Connecting to WebRTC Signaling Broker...
+                    </div>
+                </div>
+
+                <!-- High-Speed P2P ROM Staging Card -->
+                <div id="netplayRomTransferContainer" style="display: none;" class="card bg-dark border-success text-white mb-3 p-3 text-left">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <strong>⚡ P2P ROM Transfer & Verification</strong>
+                        <span id="romTransferPercent" class="badge badge-success">0%</span>
+                    </div>
+                    <div class="progress" style="height: 18px; background-color: #222;">
+                        <div id="romTransferProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success font-weight-bold" role="progressbar" style="width: 0%;">0%</div>
+                    </div>
+                    <small id="romTransferStatus" class="text-muted mt-2">Receiving high-speed ROM chunks from Host...</small>
+                </div>
+
+                <!-- Live Connection Terminal Log -->
+                <div class="text-left mt-2">
+                    <small class="text-muted font-weight-bold">Lobby Events:</small>
+                    <pre id="clientLiveTerminal" style="background: #111; color: #00ff66; font-family: monospace; font-size: 11px; padding: 8px; border-radius: 4px; height: 110px; overflow-y: auto; margin-bottom: 0; border: 1px solid #333;">[Connecting to Host...]</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mobile Save / State Menu Modal -->
+    <div id="mobileMenuModal" class="modal fade" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-dialog-centered" role="document">
+            <div class="modal-content bg-dark text-white border-secondary">
+                <div class="modal-header py-2">
+                    <h5 class="modal-title">⚙️ Game Menu & Controls</h5>
+                    <button type="button" class="close text-white" data-dismiss="modal">&times;</button>
+                </div>
+                <div class="modal-body text-center p-3">
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <button class="btn btn-info btn-block mb-2" onclick="myApp.saveStateLocal(); $('#mobileMenuModal').modal('hide');">💾 Save State</button>
                         </div>
-                    </td>
-                    <td>
-                        <div id="mobileA" class="b-a-button" rv-class-buttonhold="data.inputController.MobileA">
-                            A
+                        <div class="col-6">
+                            <button class="btn btn-primary btn-block mb-2" onclick="myApp.loadStateLocal(); $('#mobileMenuModal').modal('hide');" rv-disabled="data.noLocalSave">📂 Load State</button>
                         </div>
-                    </td>
-                </tr>
-            </table>
-            <div style="margin-left: auto;margin-right: auto;width: 100%;height: 800px;">
-                <div id="divTouchSurface" class="touchsurface">
-                    <div style="padding-top: 20px;" id="startDiv" style="-webkit-touch-callout: none; /* iOS Safari */
-                    -webkit-user-select: none; /* Safari */
-                     -khtml-user-select: none; /* Konqueror HTML */
-                       -moz-user-select: none; /* Old versions of Firefox */
-                        -ms-user-select: none; /* Internet Explorer/Edge */
-                            user-select: none; /* Non-prefixed version, currently
-                                                  supported by Chrome, Edge, Opera and Firefox */">
-                        Virtual Joystick
+                    </div>
+                    <div class="form-group text-left">
+                        <label class="small font-weight-bold">Touch Controls Opacity:</label>
+                        <input type="range" class="custom-range" min="10" max="100" value="85" oninput="window.touchController.setOpacity(this.value / 100)">
+                    </div>
+                    <div class="d-flex justify-content-between">
+                        <button class="btn btn-sm btn-outline-info" onclick="myApp.toggleFullscreen(); $('#mobileMenuModal').modal('hide');">⛶ Toggle Fullscreen</button>
+                        <button class="btn btn-sm btn-outline-warning" onclick="myApp.showDebugConsole()">🐞 Diagnostics</button>
+                        <button class="btn btn-sm btn-danger" onclick="myApp.newRom(); $('#mobileMenuModal').modal('hide');">Load New ROM</button>
                     </div>
                 </div>
             </div>
-    
-            <div id="menuDiv"
-                style="opacity: 0.5; background-color: rgba(243,244,244,1);width: 70px;position: absolute; top:0px;left:170px;font-size: 14px;">
-                -MENU-
-            </div>
-    
-    
         </div>
     </div>
 
@@ -1333,14 +1276,50 @@
                     <div class="card bg-secondary text-white mb-3 p-2 font-weight-normal" style="font-size: 13px;">
                         <div class="row">
                             <div class="col-sm-6">
-                                <div><strong>Netplay Role:</strong> <span id="diagRole">Idle</span></div>
+                                <div><strong>Netplay Role:</strong> <span id="diagRole" class="text-warning">Idle</span></div>
                                 <div><strong>Room / Peer ID:</strong> <span id="diagPeerId">--</span></div>
                                 <div><strong>ICE Connection:</strong> <span id="diagIceState">--</span></div>
+                                <div><strong>DataChannel:</strong> <span id="diagDataChannel">--</span></div>
                             </div>
                             <div class="col-sm-6">
-                                <div><strong>DataChannel:</strong> <span id="diagDataChannel">--</span></div>
-                                <div><strong>Video Stream:</strong> <span id="diagVideoTrack">--</span></div>
-                                <div><strong>Device:</strong> <span id="diagScreen">--</span></div>
+                                <div><strong>RTT / Ping:</strong> <span id="diagPing" class="text-info font-weight-bold">--</span> ms</div>
+                                <div><strong>Traffic (PPS):</strong> Sent: <span id="diagPpsSent">0</span>/s | Recv: <span id="diagPpsRecv">0</span>/s</div>
+                                <div><strong>Total Transfer:</strong> <span id="diagBytes">--</span></div>
+                                <div><strong>Viewport:</strong> <span id="diagScreen">--</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Visual Controller Input Inspector -->
+                    <div class="card bg-dark border-secondary text-white mb-3 p-2">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <strong class="text-success small">🎮 Live Controller Input Inspector</strong>
+                            <small class="text-muted">Real-time button & analog stick verification</small>
+                        </div>
+                        <div class="row text-center font-weight-bold" style="font-size: 11px;">
+                            <div class="col-6 border-right border-secondary pr-1">
+                                <div class="text-info mb-1">👑 Player 1 (Host)</div>
+                                <div id="diagP1Buttons" class="d-flex flex-wrap justify-content-center gap-1 mb-1">
+                                    <span class="badge badge-dark p-1 mr-1 mb-1" id="diagP1_A">A</span>
+                                    <span class="badge badge-dark p-1 mr-1 mb-1" id="diagP1_B">B</span>
+                                    <span class="badge badge-dark p-1 mr-1 mb-1" id="diagP1_Z">Z</span>
+                                    <span class="badge badge-dark p-1 mr-1 mb-1" id="diagP1_Start">START</span>
+                                    <span class="badge badge-dark p-1 mr-1 mb-1" id="diagP1_L">L</span>
+                                    <span class="badge badge-dark p-1 mr-1 mb-1" id="diagP1_R">R</span>
+                                </div>
+                                <small class="text-muted">Stick: <span id="diagP1_Stick">X: 0.00, Y: 0.00</span></small>
+                            </div>
+                            <div class="col-6 pl-1">
+                                <div class="text-warning mb-1">🎮 Player 2 (Guest)</div>
+                                <div id="diagP2Buttons" class="d-flex flex-wrap justify-content-center gap-1 mb-1">
+                                    <span class="badge badge-dark p-1 mr-1 mb-1" id="diagP2_A">A</span>
+                                    <span class="badge badge-dark p-1 mr-1 mb-1" id="diagP2_B">B</span>
+                                    <span class="badge badge-dark p-1 mr-1 mb-1" id="diagP2_Z">Z</span>
+                                    <span class="badge badge-dark p-1 mr-1 mb-1" id="diagP2_Start">START</span>
+                                    <span class="badge badge-dark p-1 mr-1 mb-1" id="diagP2_L">L</span>
+                                    <span class="badge badge-dark p-1 mr-1 mb-1" id="diagP2_R">R</span>
+                                </div>
+                                <small class="text-muted">Stick: <span id="diagP2_Stick">X: 0.00, Y: 0.00</span></small>
                             </div>
                         </div>
                     </div>
@@ -1349,11 +1328,11 @@
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <span class="font-weight-bold">Console Output (<span id="diagLogCount">0</span> entries):</span>
                         <div>
-                            <button class="btn btn-sm btn-outline-light mr-1" onclick="myApp.copyDiagnostics()">📋 Copy Logs</button>
+                            <button class="btn btn-sm btn-outline-light mr-1" onclick="myApp.copyDiagnostics()">📋 Copy Report</button>
                             <button class="btn btn-sm btn-outline-danger" onclick="myApp.clearDiagnostics()">Clear</button>
                         </div>
                     </div>
-                    <pre id="diagLogPre" style="background: #111; color: #39ff14; font-family: monospace; font-size: 11px; padding: 10px; border-radius: 4px; height: 260px; overflow-y: scroll; white-space: pre-wrap; word-break: break-all; margin-bottom: 0;"></pre>
+                    <pre id="diagLogPre" style="background: #111; color: #39ff14; font-family: monospace; font-size: 11px; padding: 10px; border-radius: 4px; height: 200px; overflow-y: scroll; white-space: pre-wrap; word-break: break-all; margin-bottom: 0;"></pre>
                 </div>
                 <div class="modal-footer py-1">
                     <button type="button" class="btn btn-sm btn-secondary" data-dismiss="modal">Close</button>

@@ -614,23 +614,63 @@ class InputController {
     }
 
     updateMobileControls(){
-        let mobileString = '';
-        mobileString += '0'; //UP
-        mobileString += '0'; //DOWN
-        mobileString += '0'; //LEFT
-        mobileString += '0'; //RIGHT
-        if (this.Key_Action_A) mobileString += '1'; else mobileString += '0';
-        if (this.Key_Action_B) mobileString += '1'; else mobileString += '0';
-        if (this.Key_Action_Start) mobileString += '1'; else mobileString += '0';
-        if (this.Key_Action_Z && !window["myApp"].rivetsData.useZasCMobile) mobileString += '1'; else mobileString += '0';
-        mobileString += '0'; //L
-        mobileString += '0'; //R
-        if (this.Key_Action_CUP) mobileString += '1'; else mobileString += '0'; //CUP
-        if (this.Key_Action_CDOWN) mobileString += '1'; else mobileString += '0'; //CDOWN
-        if (this.Key_Action_CLEFT) mobileString += '1'; else mobileString += '0'; //CLEFT
-        if (this.Key_Action_CRIGHT) mobileString += '1'; else mobileString += '0'; //CRIGHT
+        const netplay = window.netplayManager;
+        let a = false, b = false, start = false, z = false, l = false, r = false;
+        let cup = false, cdown = false, cleft = false, cright = false;
+        let vecX = 0, vecY = 0;
 
-        window["myApp"].sendMobileControls(mobileString, this.VectorX.toString(), this.VectorY.toString());
+        if (netplay && netplay.isClient && netplay.netplayMode === 'ROM_SYNC') {
+            // Client's local emulator: Player 1 is driven by Host remote inputs
+            const p1 = netplay.remotePlayers[0];
+            if (p1) {
+                a = p1.buttons[0];
+                b = p1.buttons[2];
+                z = p1.buttons[4];
+                r = p1.buttons[5];
+                l = p1.buttons[6];
+                start = p1.buttons[9];
+                cup = p1.buttons[12];
+                cdown = p1.buttons[13];
+                cleft = p1.buttons[14];
+                cright = p1.buttons[15];
+                vecX = p1.axes[0] || 0;
+                vecY = p1.axes[1] || 0;
+            }
+        } else {
+            // Host or Single Player: local controls
+            a = this.Key_Action_A;
+            b = this.Key_Action_B;
+            start = this.Key_Action_Start;
+            z = this.Key_Action_Z;
+            l = this.Key_Action_L;
+            r = this.Key_Action_R;
+            cup = this.Key_Action_CUP;
+            cdown = this.Key_Action_CDOWN;
+            cleft = this.Key_Action_CLEFT;
+            cright = this.Key_Action_CRIGHT;
+            vecX = this.VectorX || 0;
+            vecY = this.VectorY || 0;
+        }
+
+        let mobileString = '';
+        mobileString += '0'; // UP
+        mobileString += '0'; // DOWN
+        mobileString += '0'; // LEFT
+        mobileString += '0'; // RIGHT
+        mobileString += a ? '1' : '0';
+        mobileString += b ? '1' : '0';
+        mobileString += start ? '1' : '0';
+        mobileString += (z && (!window["myApp"] || !window["myApp"].rivetsData || !window["myApp"].rivetsData.useZasCMobile)) ? '1' : '0';
+        mobileString += l ? '1' : '0';
+        mobileString += r ? '1' : '0';
+        mobileString += cup ? '1' : '0';
+        mobileString += cdown ? '1' : '0';
+        mobileString += cleft ? '1' : '0';
+        mobileString += cright ? '1' : '0';
+
+        if (window["myApp"] && typeof window["myApp"].sendMobileControls === 'function') {
+            window["myApp"].sendMobileControls(mobileString, vecX.toString(), vecY.toString());
+        }
     }
 }
 

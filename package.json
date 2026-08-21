@@ -1,0 +1,24 @@
+{
+  "name": "romhub",
+  "version": "1.0.0",
+  "description": "**ROMHub** is a high-performance, client-side Nintendo 64 web platform powered by WebAssembly (Mupen64Plus core) and a dual-mode WebRTC P2P multiplayer engine. It allows users to run retro titles directly inside modern desktop and mobile browsers at native 60 FPS with zero backend server dependencies for emulation.",
+  "main": "input_controller.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gzyms69/romhub.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Gzyms69/romhub/issues"
+  },
+  "homepage": "https://github.com/Gzyms69/romhub#readme",
+  "dependencies": {
+    "puppeteer-core": "^25.8.0"
+  }
+}

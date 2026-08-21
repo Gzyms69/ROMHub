@@ -225,14 +225,31 @@ class MyClass {
             // Ensure canvas is set
             if (!Module.canvas) {
                 Module.canvas = document.getElementById('canvas');
-                console.log('ROMHub: Canvas set in LoadEmulator', Module.canvas);
+            }
+
+            // Pre-notify SDL2 of controllers
+            if (window.netplayManager) {
+                window.netplayManager.notifyGamepadConnected(0);
+                window.netplayManager.notifyGamepadConnected(1);
             }
 
             Module.callMain(['custom.v64']);
             this.findInDatabase();
             this.configureEmulator();
-            $('#canvasDiv').show();
+
+            // Transition UI to Responsive GameStage
+            $('#maindiv').hide();
+            $('#gameStage').show();
             this.rivetsData.beforeEmulatorStarted = false;
+
+            // Initialize PPSSPP Touch Controls if touch device
+            if (('ontouchstart' in window) || navigator.maxTouchPoints > 0) {
+                if (window.touchController) {
+                    window.touchController.init('touchOverlayContainer');
+                    window.touchController.show();
+                }
+            }
+
             this.showToast = Module.cwrap('neil_toast_message', null, ['string']);
             this.toggleFPSModule = Module.cwrap('toggleFPS', null, ['number']);
             this.sendMobileControls = Module.cwrap('neil_send_mobile_controls', null, ['string','string','string']);
@@ -430,7 +447,15 @@ class MyClass {
 
         if (this.rivetsData.settingMobile == 'ForceMobile') this.mobileMode = true;
         if (this.rivetsData.settingMobile == 'ForceDesktop') this.mobileMode = false;
-        if (this.mobileMode) configString += "1" + "\r\n"; else configString += "0" + "\r\n";
+        
+        const isNetplay = window.netplayManager && (window.netplayManager.isHost || window.netplayManager.isClient);
+        if (isNetplay) {
+            configString += "0" + "\r\n"; // Standard Gamepad Mode for SDL2 Multi-Controller Netplay
+        } else if (this.mobileMode) {
+            configString += "1" + "\r\n";
+        } else {
+            configString += "0" + "\r\n";
+        }
         if (this.rivetsData.forceAngry) configString += "1" + "\r\n"; else configString += "0" + "\r\n";
         if (this.rivetsData.mouseMode) configString += "1" + "\r\n"; else configString += "0" + "\r\n";
         if (this.iosMode || this.rivetsData.useVBO) configString += "1" + "\r\n"; else configString += "0" + "\r\n";
@@ -837,6 +862,13 @@ class MyClass {
             window.netplayManager.onLobbyUpdate = (lobbyState) => {
                 this.renderHostLobby(lobbyState);
             };
+            window.netplayManager.onTelemetryUpdate = (t) => {
+                this.updateTelemetryUI(t);
+            };
+            window.netplayManager.onSynchronizedLaunch = (seconds, onReady) => {
+                this.runSynchronizedCountdown(seconds, onReady);
+            };
+
             this.renderHostLobby({
                 roomId: roomId,
                 slots: window.netplayManager.slots,
@@ -849,6 +881,34 @@ class MyClass {
         }
     }
 
+    runSynchronizedCountdown(seconds, onComplete) {
+        $('#netplayHostModal').modal('hide');
+        $('#netplayClientView').hide();
+        $('#syncCountdownOverlay').css('display', 'flex');
+
+        let remaining = seconds;
+        const countText = document.getElementById('syncCountdownText');
+        if (countText) countText.textContent = remaining;
+
+        const interval = setInterval(() => {
+            remaining--;
+            if (remaining > 0) {
+                if (countText) countText.textContent = remaining;
+            } else if (remaining === 0) {
+                if (countText) countText.textContent = 'GO!';
+            } else {
+                clearInterval(interval);
+                $('#syncCountdownOverlay').hide();
+                $('#gameStage').show();
+                $('#inGameNetplayBadge').show();
+                $('#inGamePingBadge').show();
+
+                if (typeof onComplete === 'function') onComplete();
+                toastr.success('Multiplayer Session LIVE at 60 FPS!');
+            }
+        }, 1000);
+    }
+
     renderHostLobby(lobby) {
         const container = $('#lobbySlotsContainer');
         container.empty();
@@ -859,8 +919,11 @@ class MyClass {
             if (s.status === 'READY') {
                 badgeHtml = `<span class="badge badge-success px-2 py-1">🟢 READY (${s.ping || 0} ms)</span>`;
                 borderClass = 'border-success';
+            } else if (s.status === 'TRANSFERRING') {
+                badgeHtml = `<span class="badge badge-info px-2 py-1">⚡ TRANSFERRING ROM...</span>`;
+                borderClass = 'border-info';
             } else if (s.status === 'CONNECTING') {
-                badgeHtml = `<span class="badge badge-warning px-2 py-1">🟡 CONNECTING (5G TURN)...</span>`;
+                badgeHtml = `<span class="badge badge-warning px-2 py-1">🟡 CONNECTING (TURN)...</span>`;
                 borderClass = 'border-warning';
             } else if (s.status === 'WAITING') {
                 badgeHtml = `<span class="badge badge-secondary px-2 py-1">⏳ WAITING FOR PLAYER...</span>`;
@@ -895,9 +958,10 @@ class MyClass {
             if (lobby.isReadyToPlay) {
                 startBtn.className = 'btn btn-success btn-lg px-4 font-weight-bold';
                 startBtn.innerHTML = '▶ START / RESUME GAME (Ready!)';
+                startBtn.disabled = false;
             } else {
                 startBtn.className = 'btn btn-primary btn-lg px-4 font-weight-bold';
-                startBtn.innerHTML = '▶ START / RESUME GAME';
+                startBtn.innerHTML = '▶ START GAME (Waiting for players...)';
             }
         }
     }
@@ -918,9 +982,7 @@ class MyClass {
     }
 
     startLobbyGame() {
-        window.netplayManager.startGame();
-        $('#netplayHostModal').modal('hide');
-        toastr.success('Multiplayer session live!');
+        window.netplayManager.startSynchronizedLaunch();
     }
 
     showNetplayJoinModal() {
@@ -946,9 +1008,9 @@ class MyClass {
         }
         $('#netplayJoinModal').modal('hide');
 
-        // Hide main setup UI
+        // Hide main setup UI, Show Guest Lobby
         $('#maindiv').hide();
-        $('#middleDiv').hide();
+        $('#gameStage').hide();
         $('#netplayClientView').show();
 
         // Reset progress UI
@@ -964,15 +1026,14 @@ class MyClass {
         window.netplayManager.onTelemetryUpdate = (t) => {
             this.updateTelemetryUI(t);
         };
-        window.netplayManager.onRomReadyToLaunch = async (fullRom) => {
-            this.rom_name = 'Online Multiplayer Game';
-            $('#middleDiv').show();
-            $('#canvasDiv').show();
-            await this.LoadEmulator(fullRom);
-            if (window.touchController) {
-                window.touchController.init('netplayTouchContainer');
-                window.touchController.show();
-            }
+        window.netplayManager.onSynchronizedLaunch = async (seconds, onReady) => {
+            this.runSynchronizedCountdown(seconds, async () => {
+                if (window.netplayManager.stagedRomData) {
+                    this.rom_name = 'Online Multiplayer Game';
+                    await this.LoadEmulator(window.netplayManager.stagedRomData);
+                }
+                if (typeof onReady === 'function') onReady();
+            });
         };
 
         // Ensure input controller is ready for client gamepad/keyboard capture
@@ -980,18 +1041,12 @@ class MyClass {
             this.rivetsData.inputController.setupGamePad();
         }
 
-        // Initialize touch controller on mobile client view
-        if (window.touchController) {
-            window.touchController.init('netplayTouchContainer');
-            window.touchController.show();
-        }
-
         try {
             const slot = await window.netplayManager.startClient(code);
             const slotNum = slot + 1;
             $('#netplayPlayerLabel').text(`Player ${slotNum}`);
-            $('#clientStatusBadge').removeClass('badge-warning badge-danger').addClass('badge-success').text('🟢 P2P Live (60 FPS)');
-            toastr.success(`Connected as Player ${slotNum}!`);
+            $('#clientStatusBadge').removeClass('badge-warning badge-danger').addClass('badge-info').text('⚡ ROM Staged');
+            toastr.info(`ROM Staged! Waiting for Host to start game...`);
         } catch (err) {
             console.error('Client connection failed:', err);
             $('#clientStatusBadge').removeClass('badge-warning badge-success').addClass('badge-danger').text('🔴 Connection Failed');
@@ -1002,6 +1057,23 @@ class MyClass {
 
     updateTelemetryUI(t) {
         if (!t) return;
+
+        // Host HUD Update
+        if (window.netplayManager && window.netplayManager.isHost) {
+            $('#netplayHostHUD').show();
+            $('#hostHudRoomCode').text(t.roomId || '--');
+            $('#hostHudMode').text(t.mode || 'ROM_SYNC');
+            $('#hostHudPing').text(t.rtt || 0);
+
+            const hasP2 = (t.connectedSlots || []).includes(1);
+            if (hasP2) {
+                $('#hostHudP2Status').removeClass('badge-secondary badge-warning').addClass('badge-success').text(`P2: Connected (${t.rtt} ms)`);
+            } else {
+                $('#hostHudP2Status').removeClass('badge-success badge-warning').addClass('badge-secondary').text(`P2: Waiting...`);
+            }
+        }
+
+        // Client View Update
         $('#telemBroker').text(t.brokerConnected ? 'Connected (0.peerjs.com)' : 'Disconnected')
             .attr('class', t.brokerConnected ? 'text-success' : 'text-danger');
         
@@ -1025,6 +1097,57 @@ class MyClass {
             }
         }
         $('#telemVideo').text(videoText).attr('class', videoClass);
+
+        // Diagnostics Modal Metrics
+        $('#diagRole').text(t.role || 'Idle');
+        $('#diagPeerId').text(`${t.roomId || '--'} (${t.peerId ? t.peerId.substring(0, 8) + '...' : '--'})`);
+        $('#diagIceState').text(t.iceConnectionState || '--');
+        $('#diagDataChannel').text(t.dataChannelStatus || '--');
+        $('#diagPing').text(t.rtt || 0);
+        $('#diagPpsSent').text(t.ppsSent || 0);
+        $('#diagPpsRecv').text(t.ppsReceived || 0);
+        $('#diagBytes').text(`↑ ${t.bytesSentKB || 0} KB | ↓ ${t.bytesReceivedKB || 0} KB`);
+
+        // Live Controller Visual Inspector
+        const netplay = window.netplayManager;
+        if (netplay && typeof netplay.getLiveControllerState === 'function') {
+            const p1 = netplay.getLiveControllerState(0);
+            const p2 = netplay.getLiveControllerState(1);
+
+            if (p1 && p1.buttons) {
+                this.updateBtnBadge('diagP1_A', p1.buttons[0], 'badge-primary');
+                this.updateBtnBadge('diagP1_B', p1.buttons[2], 'badge-success');
+                this.updateBtnBadge('diagP1_Z', p1.buttons[4], 'badge-light text-dark');
+                this.updateBtnBadge('diagP1_Start', p1.buttons[9], 'badge-danger');
+                this.updateBtnBadge('diagP1_L', p1.buttons[6], 'badge-secondary');
+                this.updateBtnBadge('diagP1_R', p1.buttons[5], 'badge-secondary');
+                const p1StickX = (p1.axes && p1.axes[0] !== undefined) ? p1.axes[0].toFixed(2) : '0.00';
+                const p1StickY = (p1.axes && p1.axes[1] !== undefined) ? p1.axes[1].toFixed(2) : '0.00';
+                $('#diagP1_Stick').text(`X: ${p1StickX}, Y: ${p1StickY}`);
+            }
+
+            if (p2 && p2.buttons) {
+                this.updateBtnBadge('diagP2_A', p2.buttons[0], 'badge-primary');
+                this.updateBtnBadge('diagP2_B', p2.buttons[2], 'badge-success');
+                this.updateBtnBadge('diagP2_Z', p2.buttons[4], 'badge-light text-dark');
+                this.updateBtnBadge('diagP2_Start', p2.buttons[9], 'badge-danger');
+                this.updateBtnBadge('diagP2_L', p2.buttons[6], 'badge-secondary');
+                this.updateBtnBadge('diagP2_R', p2.buttons[5], 'badge-secondary');
+                const p2StickX = (p2.axes && p2.axes[0] !== undefined) ? p2.axes[0].toFixed(2) : '0.00';
+                const p2StickY = (p2.axes && p2.axes[1] !== undefined) ? p2.axes[1].toFixed(2) : '0.00';
+                $('#diagP2_Stick').text(`X: ${p2StickX}, Y: ${p2StickY}`);
+            }
+        }
+    }
+
+    updateBtnBadge(elemId, isPressed, activeClass) {
+        const el = document.getElementById(elemId);
+        if (!el) return;
+        if (isPressed) {
+            el.className = `badge ${activeClass} p-1 mr-1 mb-1 shadow`;
+        } else {
+            el.className = 'badge badge-dark p-1 mr-1 mb-1';
+        }
     }
 
     copyDiagnosticReport() {
@@ -1056,22 +1179,45 @@ class MyClass {
         }
     }
 
+    toggleFullscreen() {
+        const stage = document.getElementById('gameStage');
+        if (!stage) return;
+
+        if (!document.fullscreenElement) {
+            if (stage.requestFullscreen) stage.requestFullscreen().catch(() => {});
+            else if (stage.webkitRequestFullscreen) stage.webkitRequestFullscreen();
+            else if (stage.mozRequestFullScreen) stage.mozRequestFullScreen();
+            else if (stage.msRequestFullscreen) stage.msRequestFullscreen();
+            stage.classList.add('fullscreen-mode');
+
+            // Try orientation lock on mobile
+            if (screen.orientation && screen.orientation.lock) {
+                screen.orientation.lock('landscape').catch(() => {});
+            }
+        } else {
+            if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+            stage.classList.remove('fullscreen-mode');
+        }
+    }
+
+    showMobileMenu() {
+        $('#mobileMenuModal').modal('show');
+    }
+
     disconnectNetplay() {
         window.netplayManager.disconnect();
         if (window.touchController) window.touchController.hide();
+        $('#syncCountdownOverlay').hide();
+        $('#netplayHostModal').modal('hide');
         $('#netplayClientView').hide();
+        $('#gameStage').hide();
         $('#maindiv').show();
-        $('#middleDiv').show();
+        this.rivetsData.beforeEmulatorStarted = true;
         toastr.info('Disconnected from multiplayer session.');
     }
 
     toggleNetplayFullscreen() {
-        const video = document.getElementById('netplayVideo');
-        if (video) {
-            if (video.requestFullscreen) video.requestFullscreen();
-            else if (video.webkitRequestFullscreen) video.webkitRequestFullscreen();
-            else if (video.mozRequestFullScreen) video.mozRequestFullScreen();
-        }
+        this.toggleFullscreen();
     }
 
     checkNetplayHash() {
@@ -1091,11 +1237,7 @@ class MyClass {
         const telemetry = window.appLogger.getSystemTelemetry();
 
         if (telemetry.netplay) {
-            $('#diagRole').text(telemetry.netplay.isHost ? '👑 Host' : (telemetry.netplay.isClient ? `🎮 Client (P${telemetry.netplay.playerSlot + 1})` : 'Idle'));
-            $('#diagPeerId').text(telemetry.netplay.roomId ? `${telemetry.netplay.roomId} (${telemetry.netplay.peerId || '--'})` : '--');
-            $('#diagIceState').text(telemetry.netplay.iceState || 'Connected');
-            $('#diagDataChannel').text(telemetry.netplay.dataChannelState || '--');
-            $('#diagVideoTrack').text(telemetry.netplay.videoTrackStatus || '--');
+            this.updateTelemetryUI(telemetry.netplay);
         }
         $('#diagScreen').text(telemetry.screen + (telemetry.touchSupport ? ' (Touch)' : ' (No Touch)'));
 
@@ -1111,12 +1253,10 @@ class MyClass {
 
     copyDiagnostics() {
         if (!window.appLogger) return;
-        const telem = JSON.stringify(window.appLogger.getSystemTelemetry(), null, 2);
-        const logs = window.appLogger.getLogsText();
-        const fullDump = `=== ROMHub System Diagnostics ===\n${telem}\n\n=== Console Logs ===\n${logs}`;
+        const report = window.appLogger.generateFullReport();
 
-        navigator.clipboard.writeText(fullDump).then(() => {
-            toastr.success('Diagnostics & logs copied to clipboard!');
+        navigator.clipboard.writeText(report).then(() => {
+            toastr.success('Diagnostic report & logs copied to clipboard!');
         }).catch(() => {
             toastr.info('Please select and copy text manually.');
         });

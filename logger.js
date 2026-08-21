@@ -1,14 +1,14 @@
 /**
- * ROMHub Diagnostic Logger & Mobile On-Screen Debug Console
+ * ROMHub Diagnostic Logger & Mobile On-Screen Debug Console (High-Fidelity v2.0)
  * 
  * Intercepts console logs, records WebRTC / Emulation telemetry,
- * and provides a floating in-app debug HUD for mobile & desktop debugging.
+ * suppresses binary packet noise, and provides full diagnostic dumps.
  */
 
 class DiagnosticLogger {
     constructor() {
         this.logs = [];
-        this.maxLogs = 600;
+        this.maxLogs = 800;
         this.listeners = [];
         this.enabled = true;
 
@@ -23,6 +23,14 @@ class DiagnosticLogger {
             const original = console[level].bind(console);
             console[level] = function (...args) {
                 original(...args);
+
+                // Filter out high-frequency raw PeerJS packet noise if any leaks
+                if (args[0] && typeof args[0] === 'string') {
+                    if (args[0].includes('dc onmessage:') || args[0].includes('texParameter:')) {
+                        return;
+                    }
+                }
+
                 self.record(level, args);
             };
         });
@@ -42,6 +50,10 @@ class DiagnosticLogger {
         const time = new Date().toISOString().substring(11, 19);
         const formatted = args.map(arg => {
             if (typeof arg === 'string') return arg;
+            if (arg instanceof Uint8Array || arg instanceof ArrayBuffer) {
+                const len = arg.byteLength !== undefined ? arg.byteLength : arg.length;
+                return `[Binary ArrayBuffer: ${len} bytes]`;
+            }
             try {
                 return JSON.stringify(arg);
             } catch (e) {
@@ -81,7 +93,11 @@ class DiagnosticLogger {
             screen: `${window.innerWidth}x${window.innerHeight} (dpr: ${window.devicePixelRatio})`,
             touchSupport: ('ontouchstart' in window) || navigator.maxTouchPoints > 0,
             webRTCSupported: !!(window.RTCPeerConnection && window.RTCDataChannel),
-            netplay: netplay && typeof netplay.getTelemetry === 'function' ? netplay.getTelemetry() : null
+            netplay: netplay && typeof netplay.getTelemetry === 'function' ? netplay.getTelemetry() : null,
+            controllers: {
+                p1: netplay && typeof netplay.getLiveControllerState === 'function' ? netplay.getLiveControllerState(0) : null,
+                p2: netplay && typeof netplay.getLiveControllerState === 'function' ? netplay.getLiveControllerState(1) : null
+            }
         };
     }
 
@@ -100,6 +116,12 @@ class DiagnosticLogger {
                 report += `${key}: ${typeof val === 'object' ? JSON.stringify(val) : val}\n`;
             }
             report += `\n`;
+        }
+
+        if (telemetry.controllers) {
+            report += `--- Live Controller States ---\n`;
+            report += `P1: ${JSON.stringify(telemetry.controllers.p1)}\n`;
+            report += `P2: ${JSON.stringify(telemetry.controllers.p2)}\n\n`;
         }
 
         report += `--- Recent Console Logs (Last ${this.logs.length}) ---\n`;
