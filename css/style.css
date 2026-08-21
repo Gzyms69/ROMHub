@@ -348,3 +348,26 @@ body {
     50% { transform: scale(1.2); opacity: 1; }
     100% { transform: scale(1.0); opacity: 0.9; }
 }
+
+/* Live Controller Tester & Telemetry HUD Styles */
+.btn-test {
+    transition: all 0.08s ease-in-out;
+    cursor: default;
+    user-select: none;
+    font-size: 10px;
+    padding: 3px 6px;
+}
+.btn-test.active-btn-p1 {
+    background-color: #007bff !important;
+    color: #fff !important;
+    font-weight: bold;
+    box-shadow: 0 0 8px #007bff;
+    transform: scale(1.15);
+}
+.btn-test.active-btn-p2 {
+    background-color: #ffc107 !important;
+    color: #000 !important;
+    font-weight: bold;
+    box-shadow: 0 0 8px #ffc107;
+    transform: scale(1.15);
+}

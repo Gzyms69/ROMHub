@@ -345,7 +345,7 @@ class NetplayManager {
         let cStickY = 0;
 
         // 1. PPSSPP Touch Controller
-        if (window.touchController && window.touchController.enabled) {
+        if (window.touchController && window.touchController.state) {
             const ts = window.touchController.state;
             if (ts.A) buttons[0] = true;
             if (ts.B) buttons[2] = true;
@@ -495,8 +495,10 @@ class NetplayManager {
             lastUpdate: performance.now()
         };
 
+        this.lastRawPacketHex = `[0x01, slot: ${slot}, btns: 0x${buttonsMask.toString(16).padStart(4, '0')}, X: ${rawStickX}, Y: ${rawStickY}]`;
         this.tempPacketsReceived++;
         this.bytesReceived += u8.byteLength;
+        this.updateLobbyControllerHUD();
     }
 
     /**
@@ -779,6 +781,7 @@ class NetplayManager {
                         } catch (e) { }
                     }
                 });
+                this.updateLobbyControllerHUD();
             }
         };
         this.inputLoopId = setInterval(loop, 16); // Rock-solid 60 FPS loop
@@ -928,6 +931,7 @@ class NetplayManager {
                     this.tempPacketsSent++;
                     this.bytesSent += packet.byteLength;
                 } catch (e) { }
+                this.updateLobbyControllerHUD();
             }
         };
 
@@ -1034,6 +1038,86 @@ class NetplayManager {
         } else {
             return this.remotePlayers[slot];
         }
+    }
+
+    updateLobbyControllerHUD() {
+        const isHostLobby = document.getElementById('netplayHostModal') && typeof $ !== 'undefined' && $('#netplayHostModal').hasClass('show');
+        const isClientLobby = document.getElementById('netplayClientView') && document.getElementById('netplayClientView').style.display !== 'none';
+
+        if (!isHostLobby && !isClientLobby) return;
+
+        const prefix = isHostLobby ? 'host' : 'client';
+
+        let p1 = null;
+        let p2 = null;
+
+        if (this.isHost) {
+            p1 = this.captureLocalInputState(0);
+            p2 = this.remotePlayers[1];
+        } else if (this.isClient) {
+            p1 = this.remotePlayers[0];
+            p2 = this.captureLocalInputState(this.playerSlot);
+        }
+
+        const updateSlotHUD = (slotNum, state) => {
+            const containerId = (prefix === 'host') ? (slotNum === 1 ? 'hostCtrlBtnsP1' : 'hostCtrlBtnsP2') : (slotNum === 1 ? 'clientCtrlBtnsP1' : 'clientCtrlBtnsP2');
+            const stickId = (prefix === 'host') ? (slotNum === 1 ? 'hostCtrlStickP1' : 'hostCtrlStickP2') : (slotNum === 1 ? 'clientCtrlStickP1' : 'clientCtrlStickP2');
+            const btnsContainer = document.getElementById(containerId);
+            const stickEl = document.getElementById(stickId);
+            if (!btnsContainer) return;
+
+            const buttons = state ? (state.buttons || []) : [];
+            const axes = state ? (state.axes || [0, 0, 0, 0]) : [0, 0, 0, 0];
+
+            const btnMap = {
+                'A': buttons[0],
+                'B': buttons[2],
+                'Z': buttons[4],
+                'START': buttons[9],
+                'L': buttons[6],
+                'R': buttons[5],
+                'UP': buttons[12] || axes[1] < -0.4,
+                'DOWN': buttons[13] || axes[1] > 0.4,
+                'LEFT': buttons[14] || axes[0] < -0.4,
+                'RIGHT': buttons[15] || axes[0] > 0.4
+            };
+
+            const badges = btnsContainer.querySelectorAll('.btn-test');
+            badges.forEach(b => {
+                const name = b.getAttribute('data-btn');
+                const isPressed = btnMap[name] || false;
+                const activeClass = (slotNum === 1) ? 'active-btn-p1' : 'active-btn-p2';
+                if (isPressed) {
+                    b.classList.add(activeClass);
+                } else {
+                    b.classList.remove(activeClass);
+                }
+            });
+
+            if (stickEl) {
+                const sx = (axes[0] || 0).toFixed(2);
+                const sy = (axes[1] || 0).toFixed(2);
+                stickEl.textContent = `X: ${sx}, Y: ${sy}`;
+            }
+        };
+
+        updateSlotHUD(1, p1);
+        updateSlotHUD(2, p2);
+
+        // Update telemetry stats
+        const ppsSentEl = document.getElementById(`${prefix}PpsSent`);
+        const ppsRcvdEl = document.getElementById(`${prefix}PpsRcvd`);
+        const kbSentEl = document.getElementById(`${prefix}KbSent`);
+        const kbRcvdEl = document.getElementById(`${prefix}KbRcvd`);
+        const pingEl = document.getElementById(`${prefix}PingVal`);
+        const lastPayloadEl = document.getElementById(`${prefix}LastPayload`);
+
+        if (ppsSentEl) ppsSentEl.textContent = `${this.ppsSent || 0} pps`;
+        if (ppsRcvdEl) ppsRcvdEl.textContent = `${this.ppsReceived || 0} pps`;
+        if (kbSentEl) kbSentEl.textContent = `${((this.bytesSent || 0) / 1024).toFixed(1)}`;
+        if (kbRcvdEl) kbRcvdEl.textContent = `${((this.bytesReceived || 0) / 1024).toFixed(1)}`;
+        if (pingEl) pingEl.textContent = `${this.rtt || 0} ms`;
+        if (lastPayloadEl && this.lastRawPacketHex) lastPayloadEl.textContent = this.lastRawPacketHex;
     }
 
     disconnect() {

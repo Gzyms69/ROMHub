@@ -509,6 +509,77 @@
                     <small id="romTransferStatus" class="text-muted mt-2">Receiving high-speed ROM chunks from Host...</small>
                 </div>
 
+                <!-- Live Interactive Controller & Packet Telemetry Tester -->
+                <div class="card bg-secondary text-white mb-3 p-2 text-left border-0">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="font-weight-bold text-white small">🎮 Live Controller & Input Sync Tester:</span>
+                        <span id="clientLobbySyncStatus" class="badge badge-success">🟢 Connected & Synced</span>
+                    </div>
+                    <div class="row no-gutters">
+                        <!-- Player 1 Controller Box -->
+                        <div class="col-6 pr-1">
+                            <div class="p-2 rounded bg-dark border border-secondary" style="font-size: 11px;">
+                                <div class="d-flex justify-content-between font-weight-bold mb-1 text-primary">
+                                    <span>Player 1 (Host)</span>
+                                    <span class="badge badge-primary">P1</span>
+                                </div>
+                                <div class="d-flex flex-wrap mb-1" id="clientCtrlBtnsP1">
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="A">A</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="B">B</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="Z">Z</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="START">START</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="L">L</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="R">R</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="UP">▲</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="DOWN">▼</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="LEFT">◀</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="RIGHT">▶</span>
+                                </div>
+                                <div class="text-muted" style="font-family: monospace; font-size: 10px;">
+                                    Stick: <span id="clientCtrlStickP1" class="text-info">X: 0.00, Y: 0.00</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Player 2 Controller Box -->
+                        <div class="col-6 pl-1">
+                            <div class="p-2 rounded bg-dark border border-secondary" style="font-size: 11px;">
+                                <div class="d-flex justify-content-between font-weight-bold mb-1 text-warning">
+                                    <span>Player 2 (You)</span>
+                                    <span class="badge badge-warning">P2</span>
+                                </div>
+                                <div class="d-flex flex-wrap mb-1" id="clientCtrlBtnsP2">
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="A">A</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="B">B</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="Z">Z</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="START">START</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="L">L</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="R">R</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="UP">▲</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="DOWN">▼</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="LEFT">◀</span>
+                                    <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="RIGHT">▶</span>
+                                </div>
+                                <div class="text-muted" style="font-family: monospace; font-size: 10px;">
+                                    Stick: <span id="clientCtrlStickP2" class="text-warning">X: 0.00, Y: 0.00</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bidirectional Packet Inspector Bar -->
+                    <div class="mt-2 p-2 bg-dark rounded border border-dark text-muted" style="font-family: monospace; font-size: 10px;">
+                        <div class="d-flex justify-content-between flex-wrap">
+                            <span>📤 Sent: <strong id="clientPpsSent" class="text-success">0 pps</strong> (<span id="clientKbSent">0.0</span> KB/s)</span>
+                            <span>📥 Rcvd: <strong id="clientPpsRcvd" class="text-info">0 pps</strong> (<span id="clientKbRcvd">0.0</span> KB/s)</span>
+                            <span>⚡ Ping: <strong id="clientPingVal" class="text-warning">-- ms</strong></span>
+                        </div>
+                        <div class="text-truncate mt-1" style="font-size: 9px; color: #888;">
+                            Payload: <span id="clientLastPayload" style="color: #00ff66;">[0x01, slot: 1, btns: 0x0000, X: 128, Y: 128]</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Live Connection Terminal Log -->
                 <div class="text-left mt-2">
                     <small class="text-muted font-weight-bold">Lobby Events:</small>
@@ -1220,6 +1291,77 @@
                     <h6 class="font-weight-bold text-info text-left mb-2">Players in Lobby:</h6>
                     <div id="lobbySlotsContainer" class="row mb-3 text-left">
                         <!-- Rendered dynamically by script.js -->
+                    </div>
+
+                    <!-- Live Interactive Controller & Packet Telemetry Tester -->
+                    <div class="card bg-secondary text-white mb-3 p-2 text-left border-0">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="font-weight-bold text-white small">🎮 Live Controller & Input Sync Tester:</span>
+                            <span id="hostLobbySyncStatus" class="badge badge-success">🟢 Connected & Synced</span>
+                        </div>
+                        <div class="row no-gutters">
+                            <!-- Player 1 Controller Box -->
+                            <div class="col-6 pr-1">
+                                <div class="p-2 rounded bg-dark border border-secondary" style="font-size: 11px;">
+                                    <div class="d-flex justify-content-between font-weight-bold mb-1 text-primary">
+                                        <span>Player 1 (You)</span>
+                                        <span class="badge badge-primary">P1</span>
+                                    </div>
+                                    <div class="d-flex flex-wrap mb-1" id="hostCtrlBtnsP1">
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="A">A</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="B">B</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="Z">Z</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="START">START</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="L">L</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="R">R</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="UP">▲</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="DOWN">▼</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="LEFT">◀</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="RIGHT">▶</span>
+                                    </div>
+                                    <div class="text-muted" style="font-family: monospace; font-size: 10px;">
+                                        Stick: <span id="hostCtrlStickP1" class="text-info">X: 0.00, Y: 0.00</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Player 2 Controller Box -->
+                            <div class="col-6 pl-1">
+                                <div class="p-2 rounded bg-dark border border-secondary" style="font-size: 11px;">
+                                    <div class="d-flex justify-content-between font-weight-bold mb-1 text-warning">
+                                        <span>Player 2 (Guest)</span>
+                                        <span class="badge badge-warning">P2</span>
+                                    </div>
+                                    <div class="d-flex flex-wrap mb-1" id="hostCtrlBtnsP2">
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="A">A</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="B">B</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="Z">Z</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="START">START</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="L">L</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="R">R</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="UP">▲</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="DOWN">▼</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="LEFT">◀</span>
+                                        <span class="badge badge-secondary mr-1 mb-1 btn-test" data-btn="RIGHT">▶</span>
+                                    </div>
+                                    <div class="text-muted" style="font-family: monospace; font-size: 10px;">
+                                        Stick: <span id="hostCtrlStickP2" class="text-warning">X: 0.00, Y: 0.00</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Bidirectional Packet Inspector Bar -->
+                        <div class="mt-2 p-2 bg-dark rounded border border-dark text-muted" style="font-family: monospace; font-size: 10px;">
+                            <div class="d-flex justify-content-between flex-wrap">
+                                <span>📤 Sent: <strong id="hostPpsSent" class="text-success">0 pps</strong> (<span id="hostKbSent">0.0</span> KB/s)</span>
+                                <span>📥 Rcvd: <strong id="hostPpsRcvd" class="text-info">0 pps</strong> (<span id="hostKbRcvd">0.0</span> KB/s)</span>
+                                <span>⚡ Ping: <strong id="hostPingVal" class="text-warning">-- ms</strong></span>
+                            </div>
+                            <div class="text-truncate mt-1" style="font-size: 9px; color: #888;">
+                                Payload: <span id="hostLastPayload" style="color: #00ff66;">[0x01, slot: 0, btns: 0x0000, X: 128, Y: 128]</span>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Live Event Stream Log inside Lobby -->

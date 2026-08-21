@@ -191,9 +191,9 @@ class TouchController {
                     knob.style.transform = `translate(${knobX}px, ${knobY}px)`;
                 }
 
-                // Standard N64 Joystick Coordinate Normalization: -1.0 to 1.0 (Invert Y)
+                // Standard N64 Joystick Coordinate Normalization: -1.0 (UP) to 1.0 (DOWN)
                 this.state.stickX = Math.max(-1, Math.min(1, knobX / this.stickRadius));
-                this.state.stickY = Math.max(-1, Math.min(1, -(knobY / this.stickRadius)));
+                this.state.stickY = Math.max(-1, Math.min(1, knobY / this.stickRadius));
             }
         }
         this.syncState();
