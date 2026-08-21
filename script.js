@@ -8,7 +8,7 @@ console.error = function(...args) {
   originalConsoleError.apply(console, args);
 };
 
-var AUDIOBUFFSIZE = 1024;
+var AUDIOBUFFSIZE = 2048;
 
 class MyClass {
     constructor() {
@@ -367,16 +367,21 @@ bindIfExists('mobileMenuModal');
         let hadSkip = false;
         for (let sample = 0; sample < AUDIOBUFFSIZE; sample++) {
             if (this.audioWritePosition != this.audioReadPosition) {
-                outputData1[sample] = (this.audioBufferResampled[this.audioReadPosition] / 32768);
-                outputData2[sample] = (this.audioBufferResampled[this.audioReadPosition + 1] / 32768);
+                this.lastAudioL = (this.audioBufferResampled[this.audioReadPosition] / 32768);
+                this.lastAudioR = (this.audioBufferResampled[this.audioReadPosition + 1] / 32768);
+                outputData1[sample] = this.lastAudioL;
+                outputData2[sample] = this.lastAudioR;
                 this.audioReadPosition += 2;
-                if (this.audioReadPosition == 64000) {
+                if (this.audioReadPosition >= 64000) {
                     this.audioReadPosition = 0;
                 }
             }
             else {
-                outputData1[sample] = 0;
-                outputData2[sample] = 0;
+                // Smooth exponential decay instead of hard click to zero
+                this.lastAudioL = (this.lastAudioL || 0) * 0.94;
+                this.lastAudioR = (this.lastAudioR || 0) * 0.94;
+                outputData1[sample] = this.lastAudioL;
+                outputData2[sample] = this.lastAudioR;
                 hadSkip = true;
             }
         }
@@ -393,7 +398,7 @@ bindIfExists('mobileMenuModal');
             {
                 readPositionTemp += 2;
                 audioBufferRemaining += 2;
-                if (readPositionTemp == 64000) {
+                if (readPositionTemp >= 64000) {
                     readPositionTemp = 0;
                 }
             }
