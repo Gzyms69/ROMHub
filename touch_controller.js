@@ -124,6 +124,9 @@ class TouchController {
 
     handleTouchStart(e) {
         e.preventDefault();
+        if (window.myApp && window.myApp.audioContext && window.myApp.audioContext.state === 'suspended') {
+            try { window.myApp.audioContext.resume(); } catch (err) { }
+        }
         const rect = this.container.getBoundingClientRect();
         const stickZone = document.getElementById('touchStickZone');
         const stickZoneRect = stickZone ? stickZone.getBoundingClientRect() : null;

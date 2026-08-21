@@ -668,7 +668,8 @@ class InputController {
         mobileString += cleft ? '1' : '0';
         mobileString += cright ? '1' : '0';
 
-        if (window["myApp"] && typeof window["myApp"].sendMobileControls === 'function') {
+        const isNetplay = window.netplayManager && (window.netplayManager.isHost || window.netplayManager.isClient);
+        if (!isNetplay && window["myApp"] && typeof window["myApp"].sendMobileControls === 'function') {
             window["myApp"].sendMobileControls(mobileString, vecX.toString(), vecY.toString());
         }
     }

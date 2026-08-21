@@ -936,8 +936,9 @@ bindIfExists('mobileMenuModal');
                 $('#maindiv').show();
                 $('#gameStage').show();
                 $('#inGameNetplayBadge').show();
-                $('#inGamePingBadge').show();
-
+                if (this.audioContext && this.audioContext.state === 'suspended') {
+                    try { this.audioContext.resume(); } catch (e) {}
+                }
                 if (typeof onComplete === 'function') onComplete();
                 toastr.success('Multiplayer Session LIVE at 60 FPS!');
             }

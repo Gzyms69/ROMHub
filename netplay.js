@@ -358,7 +358,22 @@ class NetplayManager {
         return packet;
     }
 
+    async extractBinaryData(data) {
+        if (!data) return null;
+        if (data instanceof Uint8Array) return data;
+        if (data instanceof ArrayBuffer) return new Uint8Array(data);
+        if (data.buffer instanceof ArrayBuffer) return new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength || data.length);
+        if (typeof Blob !== 'undefined' && data instanceof Blob) {
+            try {
+                const buf = await data.arrayBuffer();
+                return new Uint8Array(buf);
+            } catch (e) { return null; }
+        }
+        return null;
+    }
+
     handleBinaryInput(data, defaultSlot) {
+        if (!data) return;
         const u8 = data instanceof Uint8Array ? data : new Uint8Array(data);
         if (u8.length < 5) return;
 
@@ -499,9 +514,10 @@ class NetplayManager {
             if (conn.open) markOpen();
             else conn.on('open', markOpen);
 
-            conn.on('data', (data) => {
-                if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
-                    this.handleBinaryInput(data, assignedSlot);
+            conn.on('data', async (data) => {
+                const binary = await this.extractBinaryData(data);
+                if (binary) {
+                    this.handleBinaryInput(binary, assignedSlot);
                 } else if (typeof data === 'object') {
                     if (data.type === 'PONG') {
                         const now = performance.now();
@@ -513,7 +529,8 @@ class NetplayManager {
                         record.crc32 = data.crc32;
                         this.updateSlotState(assignedSlot, 'READY', conn.peer);
                     } else if (data.type === 'INPUT') {
-                        this.handleBinaryInput(data.packet, assignedSlot);
+                        const innerBinary = await this.extractBinaryData(data.packet);
+                        if (innerBinary) this.handleBinaryInput(innerBinary, assignedSlot);
                     }
                 }
             });
@@ -566,8 +583,11 @@ class NetplayManager {
                 });
             } catch (e) { }
 
-            if (i % 8 === 0) {
-                await new Promise(r => setTimeout(r, 10));
+            // Flow control: throttle if WebRTC SCTP buffer grows to prevent ICE disconnect
+            if (conn.dataChannel && conn.dataChannel.bufferedAmount > 256 * 1024) {
+                await new Promise(r => setTimeout(r, 12));
+            } else if (i % 16 === 0) {
+                await new Promise(r => setTimeout(r, 2));
             }
         }
 
@@ -704,9 +724,10 @@ class NetplayManager {
                 if (this.hostConnection.open) onConnOpen();
                 else this.hostConnection.on('open', onConnOpen);
 
-                this.hostConnection.on('data', (data) => {
-                    if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
-                        this.handleBinaryInput(data, 0);
+                this.hostConnection.on('data', async (data) => {
+                    const binary = await this.extractBinaryData(data);
+                    if (binary) {
+                        this.handleBinaryInput(binary, 0);
                     } else if (typeof data === 'object') {
                         if (data.type === 'WELCOME') {
                             this.playerSlot = data.slot;
