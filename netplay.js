@@ -247,21 +247,58 @@ class NetplayManager {
         const i32 = new Int32Array(Module.HEAP32.buffer);
         const f32 = new Float32Array(Module.HEAPF32.buffer);
 
+        // Gather all 4 players' states
+        const playerStates = [];
+        for (let s = 0; s < 4; s++) {
+            if (this.isHost) {
+                playerStates[s] = (s === 0) ? this.captureLocalInputState(0) : this.remotePlayers[s];
+            } else if (this.isClient && this.netplayMode === 'ROM_SYNC') {
+                playerStates[s] = (s === this.playerSlot) ? this.captureLocalInputState(this.playerSlot) : this.remotePlayers[s];
+            } else {
+                playerStates[s] = (s === 0) ? this.captureLocalInputState(0) : null;
+            }
+        }
+
+        const p1 = playerStates[0];
+        const p2 = playerStates[1];
+
         for (let slot = 0; slot < 4; slot++) {
             const baseWord = (baseAddress / 4) + (slot * 20);
-            let state = null;
+            let state = playerStates[slot];
 
-            if (this.isHost) {
-                state = (slot === 0) ? this.captureLocalInputState(0) : this.remotePlayers[slot];
-            } else if (this.isClient && this.netplayMode === 'ROM_SYNC') {
-                state = (slot === this.playerSlot) ? this.captureLocalInputState(this.playerSlot) : this.remotePlayers[slot];
-            } else {
-                if (slot === 0) state = this.captureLocalInputState(0);
-            }
+            if (state || (slot === 0 && (p1 || p2))) {
+                let btns = state ? (state.buttons || []) : new Array(16).fill(false);
+                let axes = state ? (state.axes || [0, 0, 0, 0]) : [0, 0, 0, 0];
 
-            if (state) {
-                const btns = state.buttons || [];
-                const axes = state.axes || [0, 0, 0, 0];
+                // Co-op Assist for Controller 1 (P1): If P2 presses Start/A/B/Dpad in menus, merge into P1
+                if (slot === 0 && p2) {
+                    const p2b = p2.buttons || [];
+                    const p2a = p2.axes || [0, 0, 0, 0];
+                    btns = [
+                        btns[0] || p2b[0],   // A
+                        btns[1] || p2b[1],
+                        btns[2] || p2b[2],   // B
+                        btns[3] || p2b[3],
+                        btns[4] || p2b[4],   // Z
+                        btns[5] || p2b[5],   // R
+                        btns[6] || p2b[6],   // L
+                        btns[7] || p2b[7],
+                        btns[8] || p2b[8],
+                        btns[9] || p2b[9],   // START
+                        btns[10] || p2b[10],
+                        btns[11] || p2b[11],
+                        btns[12] || p2b[12], // UP
+                        btns[13] || p2b[13], // DOWN
+                        btns[14] || p2b[14], // LEFT
+                        btns[15] || p2b[15]  // RIGHT
+                    ];
+                    axes = [
+                        Math.abs(axes[0]) > 0.05 ? axes[0] : (p2a[0] || 0),
+                        Math.abs(axes[1]) > 0.05 ? axes[1] : (p2a[1] || 0),
+                        axes[2] || 0,
+                        axes[3] || 0
+                    ];
+                }
 
                 i32[baseWord + 0] = 1; // Connected
                 i32[baseWord + 1] = btns[12] ? 1 : 0; // UP
@@ -316,10 +353,10 @@ class NetplayManager {
             if (ts.R) buttons[5] = true;
             if (ts.L) buttons[6] = true;
             if (ts.Start) buttons[9] = true;
-            if (ts.DPAD_UP) buttons[12] = true;
-            if (ts.DPAD_DOWN) buttons[13] = true;
-            if (ts.DPAD_LEFT) buttons[14] = true;
-            if (ts.DPAD_RIGHT) buttons[15] = true;
+            if (ts.DPAD_UP) { buttons[12] = true; if (stickY === 0) stickY = -1.0; }
+            if (ts.DPAD_DOWN) { buttons[13] = true; if (stickY === 0) stickY = 1.0; }
+            if (ts.DPAD_LEFT) { buttons[14] = true; if (stickX === 0) stickX = -1.0; }
+            if (ts.DPAD_RIGHT) { buttons[15] = true; if (stickX === 0) stickX = 1.0; }
 
             if (ts.CUP) { cStickY = -1.0; buttons[12] = true; }
             if (ts.CDOWN) { cStickY = 1.0; buttons[13] = true; }
@@ -357,10 +394,10 @@ class NetplayManager {
             if (ic.Key_Action_L) buttons[6] = true;
             if (ic.Key_Action_Start) buttons[9] = true;
             if (ic.Key_Menu) buttons[11] = true;
-            if (ic.Key_Up) buttons[12] = true;
-            if (ic.Key_Down) buttons[13] = true;
-            if (ic.Key_Left) buttons[14] = true;
-            if (ic.Key_Right) buttons[15] = true;
+            if (ic.Key_Up) { buttons[12] = true; if (stickY === 0) stickY = -1.0; }
+            if (ic.Key_Down) { buttons[13] = true; if (stickY === 0) stickY = 1.0; }
+            if (ic.Key_Left) { buttons[14] = true; if (stickX === 0) stickX = -1.0; }
+            if (ic.Key_Right) { buttons[15] = true; if (stickX === 0) stickX = 1.0; }
 
             if (ic.Key_Action_CUP) cStickY = -1.0;
             if (ic.Key_Action_CDOWN) cStickY = 1.0;
@@ -717,8 +754,21 @@ class NetplayManager {
 
         const loop = () => {
             if (this.isHost && this.netplayMode === 'ROM_SYNC') {
-                const p1State = this.captureLocalInputState(0);
-                const packet = this.encodeInputPacket(0, p1State);
+                const p1Local = this.captureLocalInputState(0);
+                const p2Remote = this.remotePlayers[1];
+
+                const mergedP1 = {
+                    buttons: new Array(16).fill(false),
+                    axes: [0, 0, 0, 0]
+                };
+
+                for (let i = 0; i < 16; i++) {
+                    mergedP1.buttons[i] = p1Local.buttons[i] || (p2Remote && p2Remote.buttons && p2Remote.buttons[i]);
+                }
+                mergedP1.axes[0] = Math.abs(p1Local.axes[0]) > 0.05 ? p1Local.axes[0] : (p2Remote && p2Remote.axes ? p2Remote.axes[0] : 0);
+                mergedP1.axes[1] = Math.abs(p1Local.axes[1]) > 0.05 ? p1Local.axes[1] : (p2Remote && p2Remote.axes ? p2Remote.axes[1] : 0);
+
+                const packet = this.encodeInputPacket(0, mergedP1);
 
                 Object.values(this.connections).forEach(c => {
                     if (c.conn && c.conn.open) {
