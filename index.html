@@ -432,6 +432,25 @@
             </div>
         </div>
 
+        <!-- Responsive Fullscreen-Ready Game Stage -->
+        <div id="gameStage" style="display: none;">
+            <!-- In-Game Minimal Floating Top Pill (shown in fullscreen) -->
+            <div id="inGamePill" class="in-game-pill">
+                <span id="inGameFpsBadge" class="badge badge-success px-2 py-1">60 FPS</span>
+                <span id="inGameNetplayBadge" style="display: none;" class="badge badge-info px-2 py-1">⚡ Netplay</span>
+                <span id="inGamePingBadge" style="display: none;" class="badge badge-dark text-info px-2 py-1">-- ms</span>
+                <button type="button" class="pill-btn" onclick="myApp.toggleFullscreen()" title="Toggle Fullscreen">⛶ Fullscreen</button>
+                <button type="button" class="pill-btn" onclick="myApp.showMobileMenu()" title="Settings & Save States">⚙ Menu</button>
+                <button type="button" class="pill-btn" onclick="myApp.showDebugConsole()" title="Diagnostics & Logs">🐞</button>
+            </div>
+
+            <!-- Auto-fitting 4:3 WebGL Canvas -->
+            <canvas id="canvas"></canvas>
+
+            <!-- PPSSPP Glassmorphic On-Screen Gamepad Overlay -->
+            <div id="touchOverlayContainer"></div>
+        </div>
+
         <div id="lblErrorOuter" style="display: none;">
             <div rv-if="data.lblError | ev_string '.length > 0'"
                 class="alert alert-danger mt-4" id="lblError" role="alert" 
@@ -449,25 +468,6 @@
             <div id="syncCountdownText" class="countdown-number">3</div>
             <div id="syncCountdownSubtext" class="text-info font-weight-bold mt-2" style="font-size: 20px; letter-spacing: 2px;">SYNCHRONIZING EMULATOR ENGINES...</div>
         </div>
-    </div>
-
-    <!-- Responsive Fullscreen-Ready Game Stage -->
-    <div id="gameStage" style="display: none;">
-        <!-- In-Game Minimal Floating Top Pill -->
-        <div id="inGamePill" class="in-game-pill">
-            <span id="inGameFpsBadge" class="badge badge-success px-2 py-1">60 FPS</span>
-            <span id="inGameNetplayBadge" style="display: none;" class="badge badge-info px-2 py-1">⚡ Netplay</span>
-            <span id="inGamePingBadge" style="display: none;" class="badge badge-dark text-info px-2 py-1">-- ms</span>
-            <button type="button" class="pill-btn" onclick="myApp.toggleFullscreen()" title="Toggle Fullscreen">⛶ Fullscreen</button>
-            <button type="button" class="pill-btn" onclick="myApp.showMobileMenu()" title="Settings & Save States">⚙ Menu</button>
-            <button type="button" class="pill-btn" onclick="myApp.showDebugConsole()" title="Diagnostics & Logs">🐞</button>
-        </div>
-
-        <!-- Auto-fitting 4:3 WebGL Canvas -->
-        <canvas id="canvas"></canvas>
-
-        <!-- PPSSPP Glassmorphic On-Screen Gamepad Overlay -->
-        <div id="touchOverlayContainer"></div>
     </div>
 
     <!-- Netplay Client Dedicated Lobby View (Shown only while staging/waiting) -->

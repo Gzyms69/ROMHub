@@ -236,10 +236,11 @@ bindIfExists('mobileMenuModal');
             this.findInDatabase();
             this.configureEmulator();
 
-            // Transition UI to Responsive GameStage
-            $('#maindiv').hide();
+            // Transition UI to Responsive GameStage with full toolbar
+            $('#maindiv').show();
             $('#gameStage').show();
             this.rivetsData.beforeEmulatorStarted = false;
+            this.resizeCanvas();
 
             // Initialize PPSSPP Touch Controls if touch device
             if (('ontouchstart' in window) || navigator.maxTouchPoints > 0) {
@@ -693,10 +694,7 @@ bindIfExists('mobileMenuModal');
     }
 
     fullscreen() {
-        try {
-            let el = document.getElementById('canvas');
-            if (el.webkitRequestFullScreen) el.webkitRequestFullScreen(); else el.mozRequestFullScreen();
-        } catch (error) { console.log('full screen failed'); } //
+        this.toggleFullscreen();
     }
 
     newRom(){ location.reload(); }
