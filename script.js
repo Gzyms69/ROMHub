@@ -1047,21 +1047,6 @@ bindIfExists('mobileMenuModal');
         }
     }
 
-    setNetplayMode(mode) {
-        window.netplayManager.setMode(mode);
-        if (mode === 'ROM_SYNC') {
-            $('#currentModeBadge').removeClass('badge-info').addClass('badge-success').text('⚡ Local WebGL (ROM & Input Sync)');
-            $('#netplayModeDesc').text('Host transfers ROM to Guest in 1-2s over DataChannel. Both run native 60 FPS WebGL emulator with 0ms lag!');
-            $('#lblModeRomSync').addClass('active');
-            $('#lblModeStream').removeClass('active');
-        } else {
-            $('#currentModeBadge').removeClass('badge-success').addClass('badge-info').text('📺 Remote Video Stream');
-            $('#netplayModeDesc').text('Host streams video/audio from active canvas. Guest only needs a browser without downloading ROM.');
-            $('#lblModeStream').addClass('active');
-            $('#lblModeRomSync').removeClass('active');
-        }
-    }
-
     startLobbyGame() {
         window.netplayManager.startSynchronizedLaunch();
     }
@@ -1167,17 +1152,6 @@ bindIfExists('mobileMenuModal');
         if (t.dataChannelStatus === 'OPEN') dataClass = 'text-success';
         $('#telemData').text(t.dataChannelStatus).attr('class', dataClass);
 
-        let videoText = 'N/A';
-        let videoClass = 'text-warning';
-        if (t.videoElement) {
-            if (t.videoElement.readyState >= 2) {
-                videoText = `${t.videoElement.videoWidth}x${t.videoElement.videoHeight} (Live 60 FPS)`;
-                videoClass = 'text-success';
-            } else {
-                videoText = `ReadyState ${t.videoElement.readyState}`;
-            }
-        }
-        $('#telemVideo').text(videoText).attr('class', videoClass);
 
         // Diagnostics Modal Metrics
         $('#diagRole').text(t.role || 'Idle');

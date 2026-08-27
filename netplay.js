@@ -1,17 +1,13 @@
 /**
- * ROMHub Netplay - Dual-Mode WebRTC Multiplayer & State-Sync Engine (v3.0)
- * 
- * Features:
- * 1. Mode A: ⚡ Local WebGL (ROM & Input Sync) [Default / Recommended]
- *    - P2P ROM Chunk Streaming with CRC32 Verification
- *    - Synchronized Dual-Lobby with 3-2-1 Countdown Launch
- *    - 7-byte Standard Binary Input Protocol at 60 FPS
- *    - Deterministic Lockstep + Save-State Auto-Resync (Desync Guard)
- *    - 0ms Video Lag, Native WebGL 60 FPS
- * 
- * 2. Mode B: 📺 Remote Video Stream (Cloud Co-Op)
- *    - Host WebGL canvas captureStream(60)
- *    - Guest interactive video playback with Touch/Gamepad backchannel
+ * ROMHub Netplay - WebRTC P2P Multiplayer & State-Sync Engine (v4.0)
+ *
+ * Architecture: ROM_SYNC (both sides run the emulator locally at 60 FPS)
+ *   - P2P ROM Chunk Streaming with CRC32 Verification
+ *   - Synchronized Dual-Lobby with 3-2-1 Countdown Launch
+ *   - 7-byte Binary Input Protocol at 60 FPS via reliable DataChannel
+ *   - Per-slot independent input broadcast (Host as relay hub)
+ *   - Desync Guard: CRC32 hash check every 8s, client-pull STATE_SNAPSHOT resync
+ *   - Native WebGL 60 FPS, 0ms video lag
  */
 
 class NetplayManager {
@@ -21,12 +17,9 @@ class NetplayManager {
         this.isHost = false;
         this.isClient = false;
         this.playerSlot = 1; // 0 = P1 (Host), 1 = P2, 2 = P3, 3 = P4
-        this.netplayMode = 'ROM_SYNC'; // 'ROM_SYNC' or 'VIDEO_STREAM'
-        this.connections = {}; // peerId -> { conn, call, slot, ping, status, crc32 }
+        this.netplayMode = 'ROM_SYNC';
+        this.connections = {}; // peerId -> { conn, slot, ping, status, crc32 }
         this.hostConnection = null;
-        this.hostCall = null;
-        this.mediaStream = null;
-        this.remoteStream = null;
         this.gameStarted = false;
         this.lobbyState = 'IDLE'; // 'IDLE', 'LOBBY', 'TRANSFERRING', 'READY', 'COUNTDOWN', 'IN_GAME'
 
@@ -67,7 +60,7 @@ class NetplayManager {
         this.tempPacketsReceived = 0;
         this.rtt = 0;
 
-        // Sync Guard (Desync check every 5 seconds)
+        // Sync Guard (Desync check every 8 seconds)
         this.frameCount = 0;
         this.syncGuardIntervalId = null;
 
@@ -83,12 +76,6 @@ class NetplayManager {
 
         this.setupGamepadProxy();
         this.startTelemetryLoop();
-    }
-
-    setMode(mode) {
-        this.netplayMode = mode;
-        this.logEvent(`Multiplayer architecture set to: ${mode === 'ROM_SYNC' ? '⚡ Local WebGL (ROM Sync)' : '📺 Remote Video Stream'}`);
-        this.notifyLobby();
     }
 
     getIceServers() {
@@ -243,11 +230,12 @@ class NetplayManager {
 
     injectControllerMemory() {
         if (typeof Module === 'undefined' || !Module.HEAP32) return;
+        this.frameCount++; // Increment frame reference for desync guard
         const baseAddress = 165652540;
         const i32 = new Int32Array(Module.HEAP32.buffer);
         const f32 = new Float32Array(Module.HEAPF32.buffer);
 
-        // Gather all 4 players' states
+        // Gather all 4 players' states independently -- no merging between slots
         const playerStates = [];
         for (let s = 0; s < 4; s++) {
             if (this.isHost) {
@@ -259,46 +247,13 @@ class NetplayManager {
             }
         }
 
-        const p1 = playerStates[0];
-        const p2 = playerStates[1];
-
         for (let slot = 0; slot < 4; slot++) {
             const baseWord = (baseAddress / 4) + (slot * 20);
-            let state = playerStates[slot];
+            const state = playerStates[slot];
 
-            if (state || (slot === 0 && (p1 || p2))) {
-                let btns = state ? (state.buttons || []) : new Array(16).fill(false);
-                let axes = state ? (state.axes || [0, 0, 0, 0]) : [0, 0, 0, 0];
-
-                // Co-op Assist for Controller 1 (P1): If P2 presses Start/A/B/Dpad in menus, merge into P1
-                if (slot === 0 && p2) {
-                    const p2b = p2.buttons || [];
-                    const p2a = p2.axes || [0, 0, 0, 0];
-                    btns = [
-                        btns[0] || p2b[0],   // A
-                        btns[1] || p2b[1],
-                        btns[2] || p2b[2],   // B
-                        btns[3] || p2b[3],
-                        btns[4] || p2b[4],   // Z
-                        btns[5] || p2b[5],   // R
-                        btns[6] || p2b[6],   // L
-                        btns[7] || p2b[7],
-                        btns[8] || p2b[8],
-                        btns[9] || p2b[9],   // START
-                        btns[10] || p2b[10],
-                        btns[11] || p2b[11],
-                        btns[12] || p2b[12], // UP
-                        btns[13] || p2b[13], // DOWN
-                        btns[14] || p2b[14], // LEFT
-                        btns[15] || p2b[15]  // RIGHT
-                    ];
-                    axes = [
-                        Math.abs(axes[0]) > 0.05 ? axes[0] : (p2a[0] || 0),
-                        Math.abs(axes[1]) > 0.05 ? axes[1] : (p2a[1] || 0),
-                        axes[2] || 0,
-                        axes[3] || 0
-                    ];
-                }
+            if (state) {
+                const btns = state.buttons || new Array(16).fill(false);
+                const axes = state.axes || [0, 0, 0, 0];
 
                 i32[baseWord + 0] = 1; // Connected
                 i32[baseWord + 1] = btns[12] ? 1 : 0; // UP
@@ -313,10 +268,11 @@ class NetplayManager {
                 i32[baseWord + 11] = btns[2] ? 1 : 0; // B
                 f32[baseWord + 12] = typeof axes[0] === 'number' ? axes[0] : 0; // Stick X
                 f32[baseWord + 13] = typeof axes[1] === 'number' ? axes[1] : 0; // Stick Y
-                i32[baseWord + 16] = (btns[14] && axes[2] < -0.5) ? 1 : 0; // CLEFT
-                i32[baseWord + 17] = (btns[15] && axes[2] > 0.5) ? 1 : 0;  // CRIGHT
-                i32[baseWord + 18] = (btns[12] && axes[3] < -0.5) ? 1 : 0; // CUP
-                i32[baseWord + 19] = (btns[13] && axes[3] > 0.5) ? 1 : 0;  // CDOWN
+                // C-buttons: triggered by button flag OR right-stick axis (physical gamepad right stick)
+                i32[baseWord + 16] = (btns[14] || axes[2] < -0.5) ? 1 : 0; // CLEFT
+                i32[baseWord + 17] = (btns[15] || axes[2] > 0.5) ? 1 : 0;  // CRIGHT
+                i32[baseWord + 18] = (btns[12] || axes[3] < -0.5) ? 1 : 0; // CUP
+                i32[baseWord + 19] = (btns[13] || axes[3] > 0.5) ? 1 : 0;  // CDOWN
             }
         }
     }
@@ -517,21 +473,6 @@ class NetplayManager {
             { slot: 3, label: 'Player 4', status: 'OPEN', peerId: null, ping: 0 }
         ];
 
-        // Prepare video stream if in VIDEO_STREAM mode
-        const webglCanvas = document.getElementById('canvas');
-        if (webglCanvas && typeof webglCanvas.captureStream === 'function') {
-            const videoStream = webglCanvas.captureStream(60);
-            let audioTrack = null;
-            if (window.myApp && window.myApp.audioContext && window.myApp.gainNode) {
-                const dest = window.myApp.audioContext.createMediaStreamDestination();
-                window.myApp.gainNode.connect(dest);
-                audioTrack = dest.stream.getAudioTracks()[0];
-            }
-            const tracks = [...videoStream.getVideoTracks()];
-            if (audioTrack) tracks.push(audioTrack);
-            this.mediaStream = new MediaStream(tracks);
-        }
-
         return new Promise((resolve, reject) => {
             this.peer = new Peer(this.roomId, {
                 debug: 0, // Clean, zero console noise
@@ -613,6 +554,19 @@ class NetplayManager {
                     } else if (data.type === 'INPUT') {
                         const innerBinary = await this.extractBinaryData(data.packet);
                         if (innerBinary) this.handleBinaryInput(innerBinary, assignedSlot);
+                    } else if (data.type === 'DESYNC_REPORT') {
+                        // Client detected desync and requested a state snapshot (client-pull resync)
+                        this.logEvent(`Desync confirmed by P${assignedSlot + 1} at frame ${data.frame}! Host: ${data.hostHash}, Client: ${data.clientHash}. Sending resync snapshot...`);
+                        if (typeof FS !== 'undefined' && Module._neil_serialize) {
+                            try {
+                                Module._neil_serialize();
+                                const stateData = FS.readFile('/savestate.gz');
+                                conn.send({ type: 'STATE_SNAPSHOT', state: stateData.buffer });
+                                this.logEvent(`Resync snapshot sent to P${assignedSlot + 1} (${(stateData.byteLength / 1024).toFixed(1)} KB).`);
+                            } catch (e) {
+                                this.logEvent(`Failed to send resync snapshot: ${e.message}`);
+                            }
+                        }
                     }
                 }
             });
@@ -756,29 +710,31 @@ class NetplayManager {
 
         const loop = () => {
             if (this.isHost && this.netplayMode === 'ROM_SYNC') {
-                const p1Local = this.captureLocalInputState(0);
-                const p2Remote = this.remotePlayers[1];
+                // Broadcast P1 (Host local) state as slot 0
+                const p1State = this.captureLocalInputState(0);
+                const p1Packet = this.encodeInputPacket(0, p1State);
 
-                const mergedP1 = {
-                    buttons: new Array(16).fill(false),
-                    axes: [0, 0, 0, 0]
-                };
-
-                for (let i = 0; i < 16; i++) {
-                    mergedP1.buttons[i] = p1Local.buttons[i] || (p2Remote && p2Remote.buttons && p2Remote.buttons[i]);
+                // Collect relay packets for every connected remote slot (P2-P4)
+                const packets = [p1Packet];
+                for (let s = 1; s <= 3; s++) {
+                    if (this.hasConnectedPlayer(s)) {
+                        const slotState = this.remotePlayers[s];
+                        if (slotState && slotState.lastUpdate > 0) {
+                            packets.push(this.encodeInputPacket(s, slotState));
+                        }
+                    }
                 }
-                mergedP1.axes[0] = Math.abs(p1Local.axes[0]) > 0.05 ? p1Local.axes[0] : (p2Remote && p2Remote.axes ? p2Remote.axes[0] : 0);
-                mergedP1.axes[1] = Math.abs(p1Local.axes[1]) > 0.05 ? p1Local.axes[1] : (p2Remote && p2Remote.axes ? p2Remote.axes[1] : 0);
 
-                const packet = this.encodeInputPacket(0, mergedP1);
-
+                // Send all slot packets to each connected peer
                 Object.values(this.connections).forEach(c => {
                     if (c.conn && c.conn.open) {
-                        try {
-                            c.conn.send(packet);
-                            this.tempPacketsSent++;
-                            this.bytesSent += packet.byteLength;
-                        } catch (e) { }
+                        for (const packet of packets) {
+                            try {
+                                c.conn.send(packet);
+                                this.tempPacketsSent++;
+                                this.bytesSent += packet.byteLength;
+                            } catch (e) { }
+                        }
                     }
                 });
                 this.updateLobbyControllerHUD();
@@ -810,7 +766,7 @@ class NetplayManager {
             this.peer.on('open', (myId) => {
                 this.progress(2, `Broker Connected (${myId.substring(0, 8)}...). Connecting to Host: ${this.roomId}...`);
 
-                this.hostConnection = this.peer.connect(this.roomId, { reliable: false });
+                this.hostConnection = this.peer.connect(this.roomId, { reliable: true });
 
                 const onConnOpen = () => {
                     this.progress(3, `DataChannel connected! Waiting for session configuration...`);
@@ -893,11 +849,43 @@ class NetplayManager {
                             const inGamePing = document.getElementById('inGamePingBadge');
                             if (inGamePing) inGamePing.textContent = `${this.rtt} ms`;
                         } else if (data.type === 'STATE_SNAPSHOT') {
-                            this.logEvent(`⚡ Received Save State Resync Snapshot (${(data.state.byteLength / 1024).toFixed(1)} KB)! Restoring...`);
+                            const stateBytes = data.state instanceof ArrayBuffer ? data.state : new Uint8Array(data.state).buffer;
+                            const stateKB = (stateBytes.byteLength / 1024).toFixed(1);
+                            this.logEvent(`Received resync state snapshot (${stateKB} KB). Applying...`);
                             if (typeof FS !== 'undefined' && Module._neil_unserialize) {
-                                FS.writeFile('/savestate.gz', new Uint8Array(data.state));
-                                Module._neil_unserialize();
-                                toastr.info('Game state resynchronized!');
+                                try {
+                                    FS.writeFile('/savestate.gz', new Uint8Array(stateBytes));
+                                    Module._neil_unserialize();
+                                    toastr.info('Game state resynchronized!');
+                                    this.logEvent('Resync applied successfully.');
+                                } catch (e) {
+                                    this.logEvent(`Resync apply failed: ${e.message}`);
+                                }
+                            }
+                        } else if (data.type === 'SYNC_CHECK') {
+                            // Client-pull desync detection: compare host hash with local state hash
+                            if (typeof FS !== 'undefined' && Module._neil_serialize) {
+                                try {
+                                    Module._neil_serialize();
+                                    const localState = FS.readFile('/savestate.gz');
+                                    const localHash = this.calculateCRC32(localState);
+                                    if (localHash !== data.hash) {
+                                        this.logEvent(`Desync detected at frame ${data.frame}! Host: ${data.hash}, Local: ${localHash}. Requesting resync...`);
+                                        if (this.hostConnection && this.hostConnection.open) {
+                                            this.hostConnection.send({
+                                                type: 'DESYNC_REPORT',
+                                                clientHash: localHash,
+                                                hostHash: data.hash,
+                                                frame: data.frame
+                                            });
+                                        }
+                                        if (typeof this.onDesyncDetected === 'function') {
+                                            this.onDesyncDetected({ frame: data.frame, hostHash: data.hash, localHash });
+                                        }
+                                    }
+                                } catch (e) {
+                                    this.logEvent(`Sync check failed: ${e.message}`);
+                                }
                             }
                         }
                     }
@@ -1124,10 +1112,8 @@ class NetplayManager {
         if (this.inputLoopId) clearInterval(this.inputLoopId);
         if (this.pingIntervalId) clearInterval(this.pingIntervalId);
         if (this.syncGuardIntervalId) clearInterval(this.syncGuardIntervalId);
-        if (this.hostCall) this.hostCall.close();
         if (this.hostConnection) this.hostConnection.close();
         Object.values(this.connections).forEach(c => {
-            if (c.call) c.call.close();
             if (c.conn) c.conn.close();
         });
         if (this.peer) this.peer.destroy();
