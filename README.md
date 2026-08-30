@@ -43,32 +43,39 @@ ROMHub integrates upstream open-source emulation modules with custom, proprietar
 
 ```mermaid
 flowchart LR
-    subgraph Client_App["Web Application (Vanilla ES6 / Rivets.js / WebRTC)"]
-        ROM["ROM Binary Loader (.z64 / .n64)"]
-        Parser["ROM Header Parser & CRC32 Validator"]
-        Storage["IndexedDB (Cartridge Battery Save Persistence)"]
-        HUD["PPSSPP Touch HUD & W3C Gamepad Proxy"]
+    subgraph Client_App["1. Warstwa Klienta (Vanilla ES6 / Rivets.js / IndexedDB)"]
+        ROM["Ładowanie Obrazu ROM (.z64 / .n64)"]
+        CRC["Walidator Nagłówka & 32-Bitowa Suma Kontrolna CRC32"]
+        Storage["IndexedDB (Trwałość Stanu Bateryjnego SRAM/FlashRAM/EEPROM)"]
+        TouchHUD["Dotykowy Kontroler PPSSPP HUD (Joystick 360° & Haptics)"]
+        GamepadProxy["W3C Gamepad API Proxy (Wstrzykiwanie Stanów Slotów)"]
     end
 
-    subgraph WASM_Core["WebAssembly Core (Compiled C / C++)"]
-        CPU["VR4300 64-bit MIPS CPU Interpreter & DynaRec"]
-        RSP["RSP Vector Geometry & RDP WebGL Rasterizer"]
-        Memory["RDRAM Emulation (Unified Memory Model)"]
-        Inject["Direct WASM Memory Controller Injection (0x09DF34BC)"]
+    subgraph WASM_Core["2. Rdzeń WebAssembly C++ (Mupen64Plus / ParaLLEl)"]
+        CPU["64-bitowy Procesor MIPS VR4300i (DynaRec & Interpreter)"]
+        RCP["Reality Co-Processor: RSP Geometria Wektorowa & RDP Rasteryzator"]
+        DirectMemory["Direct WASM Memory Controller Injection (Adres 0x09DF34BC / HEAP32)"]
+        ActiveDriver["Active Frame Driver (Rozprzężenie od Blokad AudioContext Mobile)"]
     end
 
-    subgraph Audio_Visual["Browser Runtime Engines"]
-        Canvas["WebGL 2.0 Canvas (Native 60 FPS Output)"]
-        Audio["Web Audio API Ring Buffer Rate Matching"]
-        FrameDriver["Active Frame Driver (rAF Fallback)"]
+    subgraph Multiplayer_Netplay["3. Deterministyczny Silnik P2P WebRTC (Dual-Mode)"]
+        DataChannel["WebRTC DataChannel (Nieuporządkowany 7-Bajtowy Pakiet 60 Hz)"]
+        Chunker["P2P ROM Streamer (Pakiety 32 KB z Kontrolą Bufora SCTP >256 KB)"]
+        DesyncGuard["Desync Guard (Cykl Zrzutu Pamięci 8s i Resync /savestate.gz)"]
     end
 
-    ROM --> Parser --> WASM_Core
-    HUD --> Inject --> WASM_Core
-    WASM_Core --> Storage
-    CPU & RSP --> Canvas
+    subgraph Output["4. Renderery Sprzętowe Przeglądarki"]
+        WebGL["WebGL 2.0 Canvas (Płynne 60 FPS w Proporcjach 4:3)"]
+        Audio["Web Audio API Ring Buffer (Dynamiczny Rate Matching)"]
+    end
+
+    ROM --> CRC --> WASM_Core
+    TouchHUD & GamepadProxy --> DirectMemory --> CPU & RCP
+    WASM_Core <--> Storage
+    Multiplayer_Netplay <--> DirectMemory & Chunker & DesyncGuard
+    CPU & RCP --> WebGL
     WASM_Core --> Audio
-    FrameDriver -.-> CPU
+    ActiveDriver -.-> CPU
 ```
 
 ```
